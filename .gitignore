@@ -5,6 +5,7 @@ outputs/
 
 # ignore data files
 Archive/*
+conf/
 
 
 # ignore tensorboard files
