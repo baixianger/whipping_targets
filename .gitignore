@@ -3,7 +3,7 @@ wandb/
 runs/
 outputs/
 
-# 
+# ignore data files
 Archive/
 
 
