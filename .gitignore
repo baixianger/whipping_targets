@@ -3,6 +3,9 @@ wandb/
 runs/
 outputs/
 
+# 
+Archive/
+
 
 # ignore tensorboard files
 tensorboard/
