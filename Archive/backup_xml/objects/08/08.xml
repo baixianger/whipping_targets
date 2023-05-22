@@ -1,0 +1,22 @@
+<mujoco model="08">
+  <default>
+    <default class="08/visual">
+      <geom group="2" type="mesh" contype="0" conaffinity="0"/>
+    </default>
+    <default class="08/collision">
+      <geom group="3" type="mesh"/>
+    </default>
+  </default>
+  <asset>
+    <texture type="2d" name="img8" file="objects/08/img8.png"/>
+    <material name="material_0.008" texture="img8" specular="0.0" shininess="0.0"/>
+    <mesh file="objects/08/08.obj"/>
+  </asset>
+  <worldbody>
+    <body name="08">
+      <joint name="obj08" type="free"/>
+      <geom material="material_0.008" mesh="08" class="08/visual"/>
+      <geom mesh="08" class="08/collision" mass="0.5"/>
+    </body>
+  </worldbody>
+</mujoco>

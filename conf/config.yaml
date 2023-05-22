@@ -1,0 +1,12 @@
+exp_name: test
+track: False
+seed: 42
+torch_deterministic: True
+wandb_project_name: whipping
+wandb_entity: baixianger
+cuda: False # Nvida GPU
+mps: True # Apple M chip
+
+defaults:
+  - task: SingleStepTask_v0
+  - algo: ppo_continuous

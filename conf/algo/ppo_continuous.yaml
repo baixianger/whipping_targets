@@ -1,0 +1,17 @@
+total_timesteps: 64 # 1000000
+buffer_size: 32 # 256 * 8
+update_epochs: 5 # 10
+batch_size: 8 # 64
+learning_rate: 3e-4
+anneal_lr: True
+gamma: 0.99
+gae_lambda: 0.95
+hidden_dims: [64, 64]
+action_dist: normal
+norm_adv: True
+clip_coef: 0.2
+clip_vloss: True
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: 

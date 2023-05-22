@@ -1,0 +1,22 @@
+<mujoco model="02">
+  <default>
+    <default class="02/visual">
+      <geom group="2" type="mesh" contype="0" conaffinity="0"/>
+    </default>
+    <default class="02/collision">
+      <geom group="3" type="mesh"/>
+    </default>
+  </default>
+  <asset>
+    <texture type="2d" name="img2" file="objects/02/img2.png"/>
+    <material name="material_0.002" texture="img2" specular="0.0" shininess="0.0"/>
+    <mesh file="objects/02/02.obj"/>
+  </asset>
+  <worldbody>
+    <body name="02">
+      <joint name="obj02" type="free"/>
+      <geom material="material_0.002" mesh="02" class="02/visual"/>
+      <geom mesh="02" class="02/collision" mass="0.5"/>
+    </body>
+  </worldbody>
+</mujoco>
