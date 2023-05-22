@@ -4,7 +4,7 @@ runs/
 outputs/
 
 # ignore data files
-Archive/
+Archive/*
 
 
 # ignore tensorboard files
