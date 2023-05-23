@@ -6,6 +6,7 @@
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=line-too-long
 # pylint: disable=invalid-name
+import os
 import random
 import time
 import numpy as np
@@ -254,9 +255,9 @@ class Buffer:
                     continue
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], self.global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], self.global_step)
-        obs = self.data["obs"][step][-1]
-        episodic_return = self.data["rewards"].mean().item() * 2
-        print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Obs={obs}")
+        # obs = self.data["obs"][step][-1][-3:]
+        # episodic_return = self.data["rewards"].mean().item() * 2
+        # print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Obs={obs}")
 
     def GAE(self, agent:Agent, gamma, gae_lambda):
         """Get Generalized Advantage Estimation and Flatten the data into a unified tensor."""
@@ -332,7 +333,6 @@ def trainer(config):
             optimizer.param_groups[0]["lr"] = lrnow
 
         # STEP 1: Sampling
-        print(f"Update{update}-Sampling")
         buffer.sampling(agent, envs, writer)
         buffer.GAE(agent, ppo_args.gamma, ppo_args.gae_lambda)
 
@@ -340,9 +340,8 @@ def trainer(config):
         #         每次重采样后, 迭代update_epochs次, 默认10
         #         设计迭代次数是update_epochs * (buffer_size / batch_size)
         clipfracs = []
-        print(f"\tTraining:", end='  ')
+
         for i in range(ppo_args.update_epochs):
-            print(f"iter{i}", end='  ')
             for obs, actions, logprobs, _, _, values, advantages, returns in buffer:
                 _, newlogprob, entropy, newvalue = agent(obs, actions) # pylint: disable=not-callable
                 logratio = newlogprob - logprobs
@@ -401,8 +400,21 @@ def trainer(config):
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        SPS = int(global_step / (time.time() - start_time))
+        TPU = (time.time() - start_time) / update
+        RT  = (num_updates - update) * TPU
+        print(f"Update={update}, SPS={SPS}, TPU={TPU/60:.2f}min, RT={RT/60:.2f}min", end="\r")
+        writer.add_scalar("charts/SPS", SPS, global_step)
 
+        # Checkpoints
+        freq = 50
+        if update % freq == 0:
+            torch.save(agent, f"checkpoints/{run_name}-update{update}.pth")
+            # delete old checkpoints
+            for filename in os.listdir("checkpoints"):
+                if filename == f"{run_name}-update{update-freq}.pth":
+                    os.remove(f"checkpoints/{filename}")
+    # Final save
+    torch.save(agent, f"checkpoints/{run_name}-update{update}.pth")
     envs.close()
     writer.close()

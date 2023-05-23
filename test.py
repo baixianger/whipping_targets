@@ -1,4 +1,5 @@
 """Module test"""
+import os
 import numpy as np
 import torch
 from torchinfo import summary
@@ -25,7 +26,19 @@ def test(): # pylint: disable=missing-function-docstring
 
     agent = Agent(envs, 32, "beta", True)
     tensor = torch.as_tensor(envs.single_observation_space.sample(), dtype=torch.float32).reshape(1, -1)
-    # import IPython; IPython.embed()
+    freq = 2
+    run_name = "test"
+    for update in range(1, 10):
+        freq = 2
+        if update % freq == 0:
+            torch.save(agent, f"checkpoints/{run_name}-update{update}.pth")
+            # delete old checkpoints
+            for filename in os.listdir("checkpoints"):
+                print(filename, type(filename))
+                old_update = update - freq
+                if filename == f"{run_name}-update{old_update}.pth":
+                    print(f"delete old checkpoint at update {old_update}.")
+                    os.remove(f"checkpoints/{filename}")
 
 
     return 0

@@ -11,4 +11,3 @@ wandb_project_name: whipping
 wandb_entity: baixianger
 cuda: True # Nvida GPU
 mps: False # Apple M chip
-

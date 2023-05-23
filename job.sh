@@ -3,7 +3,7 @@
 #BSUB -J Whipping
 #BSUB -n 16
 #BSUB -gpu "num=1:mode=exclusive_process"
-#BSUB -W 5:00
+#BSUB -W 7:00
 #BSUB -R "rusage[mem=16GB]"
 #BSUB -u baixianger@gmail.com
 #BSUB -B
@@ -22,7 +22,7 @@ python3 train.py
 
 ## Tutorial about LSF
 # submit job
-# bsub < jobscript.sh
+# bsub < job.sh
 # check job status
 # bjobs
 # check job output

@@ -1,5 +1,5 @@
 env_id: SingleStepTask-v0
-num_envs: 32 # 256
+num_envs: 64 # 256
 asynchronous: True
 ctrl_type: position
 whip_type: 0
