@@ -2,11 +2,7 @@
 wandb/
 runs/
 outputs/
-Archive/*
 conf/
-
-
-# ignore tensorboard files
 tensorboard/
 
 # Byte-compiled / optimized / DLL files

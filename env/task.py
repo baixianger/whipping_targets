@@ -271,8 +271,11 @@ class _BasicTask(composer.Task):
         self._task_observables['distance'].corruptor = norm_corrptor
 
     def _whip_to_target(self, physics):  # w2t: whip to target
-        whip_pos = physics.bind(self.entities.whip.whip_end).xpos
-        return self.entities.target.global_vector_to_local_frame(physics, whip_pos)
+        # 一个内置的计算方法
+        # self.entities.target.global_vector_to_local_frame(physics, whip_pos)
+        source = physics.bind(self.entities.whip.whip_end).xpos
+        target = physics.bind(self.entities.target.target_body).xpos
+        return np.linalg.norm(source - target)
 
     def _hit_detection(self, physics):
         target = self.entities.target.target_body
@@ -310,9 +313,10 @@ class SingleStepTask(_BasicTask):
         self._initial_arm_qpos = np.array([0, 0, 0, 0, 0, 0, 0])
         self.time_limit = 1
         self.max_steps = 1
-        self.set_timesteps(0.5, 0.002)
+        self.set_timesteps(1, 0.002)
         self._observables_config(['arm/arm_joints_qpos', 'arm/arm_joints_qvel',
-                                  'arm/whip/whip_end_xpos','target/target_xpos',])
+                                  'arm/whip/whip_end_xpos','target/target_xpos',
+                                  'distance'])
 
     def should_terminate_episode(self, physics):
         return physics.time() > self.time_limit
