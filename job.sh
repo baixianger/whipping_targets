@@ -1,10 +1,12 @@
 #!/bin/sh
-#BSUB -q gpuv100
+#BSUB -q gpua10
 #BSUB -J Whipping
-#BSUB -n 16
+#BSUB -n 32
+#BSUB -R "span[hosts=1]"
+## #BSUB -R "select[model==XeonGold6126]"
 #BSUB -gpu "num=1:mode=exclusive_process"
-#BSUB -W 7:00
-#BSUB -R "rusage[mem=16GB]"
+#BSUB -W 8:00
+#BSUB -R "rusage[mem=4GB]"
 #BSUB -u baixianger@gmail.com
 #BSUB -B
 #BSUB -N
