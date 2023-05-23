@@ -1,7 +1,7 @@
-total_timesteps: 150000 # 1000000
-buffer_size: 2048 # 256 * 8
+total_timesteps: 3200 # 1000000
+buffer_size: 512 # 256 * 8
 update_epochs: 10 # 10
-batch_size: 64 # 64
+batch_size: 32 # 64
 learning_rate: 3e-4
 anneal_lr: True
 gamma: 0.99

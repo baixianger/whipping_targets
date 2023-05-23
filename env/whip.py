@@ -60,6 +60,7 @@ class Whip(composer.Entity):
         self._model = self._make_model(**kwargs)
         self._whip_begin = self._model.find('body', 'B0')
         self._whip_end = self._model.find('body', 'whip_end')
+        self._whip_joints = self._model.find_all('joint')
 
     def _build_observables(self):
         """Returns the observables for the whip."""

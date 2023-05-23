@@ -142,6 +142,24 @@ class TaskEntities:
         self.arena.attach(self.arm)
         self.arena.attach(self.target)
 
+key_frame = np.array([ 1.94554078e-04,  2.14750126e-03,  3.39502991e-05, -3.30299255e-01,
+                      -5.63442080e-04,  2.27793041e-02,  1.74814756e-03, -2.01016613e-01,
+                       2.35287420e-02, -1.10745372e-01,  1.33430657e-02, -6.33656953e-02,
+                       8.28183647e-03, -3.80109847e-02,  6.12615765e-03, -2.52217774e-02,
+                       5.24265351e-03, -1.67522289e-02,  3.33613481e-03, -1.36889706e-02,
+                       2.07464681e-03, -1.37121126e-02,  3.53944464e-03, -1.34581836e-02,
+                       4.52296711e-03, -1.28308707e-02,  5.17379965e-03, -1.38731480e-02,
+                       7.20811993e-03, -1.49824154e-02,  8.28500445e-03, -1.61220593e-02,
+                       8.70748457e-03, -1.75925399e-02,  9.52036647e-03, -1.90088823e-02,
+                       1.05211317e-02, -1.93481261e-02,  1.10960942e-02, -1.73823887e-02,
+                       1.05858611e-02, -1.15217481e-02,  8.33064990e-03,  1.87467557e-04,
+                       3.61796101e-03,  1.97248685e-02, -4.49516326e-03,  4.84197498e-02,
+                      -1.66752753e-02,  8.67328836e-02, -3.34145100e-02,  1.34580639e-01,
+                      -5.36959499e-02,  1.88451865e-01, -7.53259207e-02,  2.40644234e-01,
+                      -9.43795758e-02,  2.79265676e-01, -1.05867951e-01,  2.90582510e-01,
+                      -1.05755340e-01,  2.64114859e-01, -9.27365854e-02,  1.97256521e-01,
+                      -6.80445888e-02,  9.84576973e-02, -3.48248498e-02,  8.55738387e-01,
+                       1.08593278e-01,  5.04003407e-01, -4.35876025e-02])
 
 class _BasicTask(composer.Task):
     """basic task for whipping expriments
@@ -200,6 +218,7 @@ class _BasicTask(composer.Task):
                                      target=Target(),
                                      arena=floors.Floor(),)
         self.entities.install()
+        self.all_joints = self.root_entity.mjcf_model.find_all("joint")
         self._mjcf_variator = variation.MJCFVariator()
         self._physics_variator = variation.PhysicsVariator()
 
@@ -207,7 +226,6 @@ class _BasicTask(composer.Task):
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
         self._task_observables['distance'] = observable.Generic(lambda x: self.stats.distance)
 
-        self._initial_arm_qpos = np.array([0, 1, 0, 0, 0, 0, 0])
         if obs_noise is not None:
             self._set_noise(obs_noise)
 
@@ -230,7 +248,7 @@ class _BasicTask(composer.Task):
 
     def initialize_episode(self, physics, random_state):
         self._physics_variator.apply_variations(physics, random_state)
-        physics.bind(self.entities.arm.arm_joints).qpos = self._initial_arm_qpos
+        physics.bind(self.all_joints).qpos = key_frame
         self.entities.target.set_pose(physics, self._target_pos(random_state))
 
     def before_step(self, physics, action, random_state):
@@ -310,13 +328,12 @@ class SingleStepTask(_BasicTask):
                  **kwargs,
                  ):  # pylint: disable=too-many-arguments
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
-        self._initial_arm_qpos = np.array([0, 0, 0, 0, 0, 0, 0])
         self.time_limit = 1
         self.max_steps = 1
         self.set_timesteps(1, 0.002)
-        self._observables_config(['arm/arm_joints_qpos', 'arm/arm_joints_qvel',
-                                  'arm/whip/whip_end_xpos','target/target_xpos',
-                                  'distance'])
+        self._observables_config(['arm/arm_joints_qpos',
+                                  'arm/whip/whip_end_xpos',
+                                  'target/target_xpos'])
 
     def should_terminate_episode(self, physics):
         return physics.time() > self.time_limit

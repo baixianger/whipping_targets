@@ -1,5 +1,10 @@
-exp_name: test
-track: False
+defaults:
+  - task: SingleStepTask_v0
+  - algo: ppo_continuous
+
+
+exp_name: HPCtest
+track: True
 seed: 42
 torch_deterministic: True
 wandb_project_name: whipping
@@ -7,6 +12,3 @@ wandb_entity: baixianger
 cuda: True # Nvida GPU
 mps: False # Apple M chip
 
-defaults:
-  - task: SingleStepTask_v0
-  - algo: ppo_continuous

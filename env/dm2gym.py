@@ -24,25 +24,26 @@ def register2gym(env_id, img_size=84, camera_id=0):
                     "camera_id": camera_id}
         )
 
-def make_vectorized_envs(env_id, num_envs, asynchronous, gamma, **kwargs):
+def make_vectorized_envs(env_id, num_envs, asynchronous, **kwargs):
     """Set vectorized environment."""
-    gym_env_fns = [lambda : make_gym_env(env_id, gamma, **kwargs) for _ in range(num_envs)]
+    gym_env_fns = [lambda : make_gym_env(env_id, **kwargs) for _ in range(num_envs)]
     if asynchronous:
         return gym.vector.AsyncVectorEnv(gym_env_fns)
     return gym.vector.SyncVectorEnv(gym_env_fns)
 
-def make_gym_env(env_id, img_size=84, camera_id=0, gamma=0.99, **kwargs):
-    env = WhippingGym(env_id, img_size, camera_id, **kwargs)
+def make_gym_env(env_id, **kwargs):
+    env = WhippingGym(env_id, **kwargs)
     env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.ClipAction(env)
-    env = gym.wrappers.NormalizeObservation(env)
-    env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-    env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-    env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+    # env = gym.wrappers.NormalizeObservation(env)
+    # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+    # if kwargs.get("gamma"):
+    #     env = gym.wrappers.NormalizeReward(env, gamma=kwargs["gamma"])
+    # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
     return env
 
-def make_dm_env(env_id, seed=None, **kwargs):
+def make_dm_env(env_id, **kwargs):
     """Create a dm_control environment."""
     task_list = TaskDict().task_list
     task_setting = TaskDict().task_setting
@@ -53,7 +54,7 @@ def make_dm_env(env_id, seed=None, **kwargs):
         dm_task = task_list[env_id](**kwargs)
     else:
         dm_task = task_list[env_id](task_setting[env_id])
-    return dm_task, composer.Environment(task=dm_task, random_state=seed)
+    return dm_task, composer.Environment(task=dm_task)
 
 class WhippingGym(gym.Env):
     """Convert dm_control environment to gym environment."""

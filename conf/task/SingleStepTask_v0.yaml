@@ -1,10 +1,10 @@
 env_id: SingleStepTask-v0
-num_envs: 256 # 256
+num_envs: 32 # 256
 asynchronous: True
 ctrl_type: position
 whip_type: 0
 whip_nodes: 30
 whip_mass: 0.5
 whip_length: 1
-targets: 0 # debug backdoor fixed target to [-1, 0, 1]
+target: 0 # debug backdoor fixed target to [-1, 0, 1]
 noise: 

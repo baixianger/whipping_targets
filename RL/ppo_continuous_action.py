@@ -78,18 +78,15 @@ class Agent(nn.Module):
                 )
             self._policy = self._get_normal_action
         elif action_dist == "beta":
-            if independent:
-                self.actor_alpha = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
-                self.actor_beta = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
-            else:
-                self.actor_alpha = nn.Sequential(
-                    head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
-                    layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
-                )
-                self.actor_beta = nn.Sequential(
-                    head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
-                    layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
-                )
+            self.activation = nn.Softmax()
+            self.actor_alpha = nn.Sequential(
+                head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
+                layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
+            )
+            self.actor_beta = nn.Sequential(
+                head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
+                layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
+            )
             self._policy = self._get_beta_action
         else:
             raise ValueError(f"Unsupported action distribution: {action_dist}")
@@ -109,8 +106,8 @@ class Agent(nn.Module):
         return self.critic(x)
 
     def _get_beta_action(self, x, action=None):
-        action_alpha = (F.softmax(self.actor_alpha) + 1).expand(x.shape[0], -1)
-        action_beta = (F.softmax(self.actor_beta) + 1).expand(x.shape[0], -1)
+        action_alpha = (self.activation(self.actor_alpha(x)) + 1)
+        action_beta = (self.activation(self.actor_beta(x)) + 1)
         probs = Beta(action_alpha, action_beta)
         if action is None:
             _action = probs.sample()
@@ -132,12 +129,12 @@ class Agent(nn.Module):
         return action, log_prob, probs.entropy().sum(1, keepdim=True)
 
     def _scale_action(self, action):
-        """Scale action from [low, high] to [-1, 1]."""
-        return 2.0 * (action - self.action_low) / (self.action_high - self.action_low) - 1.0
+        """Scale action from [low, high] to [0, 1]."""
+        return (action - self.action_low) / (self.action_high - self.action_low)
 
     def _rescale_action(self, action):
-        """Rescale action from [-1, 1] to [low, high]."""
-        return self.action_low + (0.5 * (action + 1.0) * (self.action_high - self.action_low))
+        """Rescale action from [0, 1] to [low, high]."""
+        return action * (self.action_high - self.action_low) + self.action_low
 
 class Buffer:
     """Buffer for offline RL
@@ -258,7 +255,7 @@ class Buffer:
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], self.global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], self.global_step)
         obs = self.data["obs"][step][-1]
-        episodic_return = infos["final_info"][-1]["episode"]["r"]
+        episodic_return = self.data["rewards"].mean().item() * 2
         print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Obs={obs}")
 
     def GAE(self, agent:Agent, gamma, gae_lambda):
@@ -311,7 +308,7 @@ def trainer(config):
     writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
 
     # 3.ENVIRONMENT
-    envs = make_vectorized_envs(env_id, env_args.num_envs, env_args.asynchronous, ppo_args.gamma)
+    envs = make_vectorized_envs(**env_args, gamma=ppo_args.gamma)
     assert isinstance(envs.single_action_space, gym.spaces.Box),\
         "only continuous action space is supported"
 
