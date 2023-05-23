@@ -239,7 +239,6 @@ class Buffer:
             self.data["dones"][step] = self.next_done  # (buffer_batch, 1)
             with torch.no_grad():
                 action, logprob, _, value = agent(self.next_obs)
-                print(action.shape, logprob.shape, value.shape)
                 self.data["values"][step] = value      # (buffer_batch, 1)
                 self.data["actions"][step] = action    # (buffer_batch, action_dim)
                 self.data["logprobs"][step] = logprob  # (buffer_batch, 1)
@@ -256,11 +255,11 @@ class Buffer:
                 # Skip the envs that are not done
                 if info is None:
                     continue
-                target = self.data["obs"][step][i][-3:]
-                print(f"Thread{i}: global_step={self.global_step}, episodic_return={info['episode']['r']}",
-                      f"Target={target}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], self.global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], self.global_step)
+        target = self.data["obs"][step][-1][-6:-3]
+        episodic_return = infos["final_info"][-1]["episode"]["r"]
+        print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Target={target}")
 
     def GAE(self, agent:Agent, gamma, gae_lambda):
         """Get Generalized Advantage Estimation and Flatten the data into a unified tensor."""
@@ -326,6 +325,7 @@ def trainer(config):
     # 7.LEARNING LOOP
     start_time = time.time()
     num_updates = ppo_args.total_timesteps // ppo_args.batch_size
+    print(f"Start PPO...总更新次数为{num_updates}")
     for update in range(1, num_updates + 1):
 
         # learning rate decay from learning_rate to 0
@@ -335,6 +335,7 @@ def trainer(config):
             optimizer.param_groups[0]["lr"] = lrnow
 
         # STEP 1: Sampling
+        print(f"Update{update}-Sampling")
         buffer.sampling(agent, envs, writer)
         buffer.GAE(agent, ppo_args.gamma, ppo_args.gae_lambda)
 
@@ -342,7 +343,9 @@ def trainer(config):
         #         每次重采样后, 迭代update_epochs次, 默认10
         #         设计迭代次数是update_epochs * (buffer_size / batch_size)
         clipfracs = []
-        for _ in range(ppo_args.update_epochs):
+        print(f"\tTraining:", end='  ')
+        for i in range(ppo_args.update_epochs):
+            print(f"iter{i}", end='  ')
             for obs, actions, logprobs, _, _, values, advantages, returns in buffer:
                 _, newlogprob, entropy, newvalue = agent(obs, actions) # pylint: disable=not-callable
                 logratio = newlogprob - logprobs

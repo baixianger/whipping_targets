@@ -17,10 +17,25 @@ def test(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     print(type(cfg.algo.target_kl))
 
-    task = SingleStepTask(target=100)
+    task = SingleStepTask(
+        ctrl_type="position",
+        target=0)
     env = composer.Environment(task=task, random_state=42)
     env.reset()
     action_spec = env.action_spec()
+    print(action_spec)
+
+    # 获取target的位置 三种方式
+    target = env.task.entities.target.target_body
+    target_pos = env.physics.bind(target).pos
+    print(target_pos)
+    target_mjcf = env.task.entities.target.mjcf_model
+    target_attachment_frame = mjcf.get_attachment_frame(target_mjcf)
+    target_pos = env.physics.bind(target_attachment_frame).xpos
+    print(target_pos, target_attachment_frame)
+    target_pos = env.task._target_pos()
+    print(target_pos)
+
 
     # Define a uniform random policy.
     def random_policy(time_step):
@@ -49,9 +64,9 @@ def test(cfg: DictConfig):
     env.task.entities.target.set_pose(env.task._target_pos())
 
     env.physics.bind(env.task.entities.arm.arm_joints).qpos = np.array([3, 3, 3, 3, 3, 3, 3])
-    IPython.embed()
-    # Launch the viewer application.
-    viewer.launch(env, policy=random_policy)
+    # IPython.embed()
+    # # Launch the viewer application.
+    # viewer.launch(env, policy=random_policy)
 
 if __name__ == '__main__':
     test() # pylint: disable=no-value-for-parameter

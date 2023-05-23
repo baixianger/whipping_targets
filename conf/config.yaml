@@ -1,11 +1,11 @@
 exp_name: test
-track: False
+track: True
 seed: 42
 torch_deterministic: True
 wandb_project_name: whipping
 wandb_entity: baixianger
-cuda: False # Nvida GPU
-mps: True # Apple M chip
+cuda: True # Nvida GPU
+mps: False # Apple M chip
 
 defaults:
   - task: SingleStepTask_v0

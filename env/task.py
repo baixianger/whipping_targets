@@ -43,8 +43,12 @@ class FixedRandomPos():
                  radius_range=_RADIUS_RANGE,
                  heading_range=_HEADING_RANGE,
                  n=100, seed=42, **kwargs):
-        self.n = n
-        self.targets = self.target_pos_generator(hight_range, radius_range, heading_range, n, seed)
+        if n == 0: # debug for RL algorithm only hit fixed target
+            self.n = 1
+            self.targets = np.array([[-1, 0, 1]])
+        else:
+            self.n = n
+            self.targets = self.target_pos_generator(hight_range, radius_range, heading_range, n, seed)
 
     def target_pos_generator(self, hight_range, radius_range, heading_range, n, seed=42):
         """Generate a random target position. Shape is (n, 3)."""

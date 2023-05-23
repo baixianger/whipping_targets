@@ -15,15 +15,17 @@ def test(): # pylint: disable=missing-function-docstring
     envs = make_vectorized_envs(env_id="SingleStepTask-v0",
                                 num_envs=4,
                                 asynchronous=True,
-                                gamma=0.99,)
+                                gamma=0.99,
+                                ctrl_type="torque")
     envs.reset(seed=0)
     print(envs.observation_space, np.array(envs.single_observation_space.shape).prod())
+    print(envs.single_action_space)
     rand_actions = envs.action_space.sample()
     envs.step(rand_actions)
 
     agent = Agent(envs, 32, "beta", True)
     tensor = torch.as_tensor(envs.single_observation_space.sample(), dtype=torch.float32).reshape(1, -1)
-    import IPython; IPython.embed()
+    # import IPython; IPython.embed()
 
 
     return 0
