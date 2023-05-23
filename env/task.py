@@ -225,17 +225,18 @@ class _BasicTask(composer.Task):
         return self._task_observables
 
     def initialize_episode_mjcf(self, random_state):
-        variation.MJCFVariator().apply_variations(random_state)
+        self._mjcf_variator.apply_variations(random_state)
         self.stats.reset()
 
     def initialize_episode(self, physics, random_state):
-        variation.PhysicsVariator().apply_variations(physics, random_state)
+        self._physics_variator.apply_variations(physics, random_state)
         physics.bind(self.entities.arm.arm_joints).qpos = self._initial_arm_qpos
         self.entities.target.set_pose(physics, self._target_pos(random_state))
 
     def before_step(self, physics, action, random_state):
         self.stats.distance_buffer = []
         self.stats.timer = physics.time()
+        physics.set_control(action)
 
     def after_substep(self, physics, random_state):
         vector = self._whip_to_target(physics)
@@ -306,8 +307,8 @@ class SingleStepTask(_BasicTask):
                  **kwargs,
                  ):  # pylint: disable=too-many-arguments
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
-        self._initial_arm_qpos = np.array([0, 0, 0, 0, 0, 1.5, 0])
-        self.time_limit = 0.5
+        self._initial_arm_qpos = np.array([0, 0, 0, 0, 0, 0, 0])
+        self.time_limit = 1
         self.max_steps = 1
         self.set_timesteps(0.5, 0.002)
         self._observables_config(['arm/arm_joints_qpos', 'arm/arm_joints_qvel',
@@ -351,9 +352,12 @@ class TwoStepTask(_BasicTask):
         if not self._fixed_time:
             n_ratio = int(action[-1] / self.physics_timestep)
             self.control_timestep = n_ratio * self.physics_timestep
+            physics.set_control(action[:-1])
+        else:
+            physics.set_control(action)
 
     def after_substep(self, physics, random_state):
-        distance = self._distance_w2t(physics)
+        distance = self._whip_to_target(physics)
         self.stats.distance_buffer.append(distance)
 
     def after_step(self, physics, random_state):
