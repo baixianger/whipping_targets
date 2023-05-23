@@ -7,7 +7,7 @@ anneal_lr: True
 gamma: 0.99
 gae_lambda: 0.95
 hidden_dims: [64, 32]
-action_dist: beta
+action_dist: normal
 norm_adv: True
 clip_coef: 0.2
 clip_vloss: True

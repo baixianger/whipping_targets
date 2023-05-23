@@ -72,12 +72,12 @@ class Whip(composer.Entity):
     @property
     def whip_end(self):
         """Returns the whip end."""
-        return self._model.find('body', 'whip_end')
+        return self._whip_end
 
     @property
     def whip_begin(self):
         """Returns the whip begin."""
-        return self._model.find('body', 'B0')
+        return self._whip_begin
 
     def update_whip_color(self, physics):
         """Updates the activation of the whip."""

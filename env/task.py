@@ -206,10 +206,7 @@ class _BasicTask(composer.Task):
         self._task_observables = {}
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
         self._task_observables['distance'] = observable.Generic(lambda x: self.stats.distance)
-        self._task_observables['target_distance'] = observable.Generic(self._distance_w2t,
-                                                                       aggregator='min')
-        self._task_observables['whip_distance'] = observable.Generic(self._distance_w2t,
-                                                                     aggregator='max')
+
         self._initial_arm_qpos = np.array([0, 1, 0, 0, 0, 0, 0])
         if obs_noise is not None:
             self._set_noise(obs_noise)
@@ -233,21 +230,26 @@ class _BasicTask(composer.Task):
 
     def initialize_episode(self, physics, random_state):
         variation.PhysicsVariator().apply_variations(physics, random_state)
-        self._initialize_arm_qpos(physics)
-        self._initialize_target_xpos(physics, random_state)
+        physics.bind(self.entities.arm.arm_joints).qpos = self._initial_arm_qpos
+        self.entities.target.set_pose(physics, self._target_pos(random_state))
+
+    def before_step(self, physics, action, random_state):
+        self.stats.distance_buffer = []
+        self.stats.timer = physics.time()
+
+    def after_substep(self, physics, random_state):
+        vector = self._whip_to_target(physics)
+        distance = np.linalg.norm(vector)
+        self.stats.distance_buffer.append(distance)
+
+    def after_step(self, physics, random_state):
+        self.stats.step_counter += 1
+        self.stats.distance = np.min(self.stats.distance_buffer)
 
     def get_reward(self, physics):
-        """WARNNING: Not working here, specify the reward function in the subclass."""
         return 1.0
 
     # ----------自定义函数----------
-    def _initialize_arm_qpos(self, physics):
-        physics.bind(self.entities.arm.arm_joints).qpos = self._initial_arm_qpos
-
-    def _initialize_target_xpos(self, physics, random_state):
-        physics.bind(self.entities.target.target_body).pos = self._target_pos(
-            random_state=random_state)
-
     def _observables_config(self, names):
         """Enable the observables needed and add noise/corruptor for subclass."""
         for key in names:
@@ -264,24 +266,12 @@ class _BasicTask(composer.Task):
         self.entities.whip.observables.whip_begin_xpos.corruptor = norm_corrptor
         self.entities.whip.observables.whip_end_xpos.corruptor = norm_corrptor
         self.entities.target.observables.target_xpos.corruptor = norm_corrptor
-        self._task_observables['target_distance'].corruptor = norm_corrptor
-        self._task_observables['whip_distance'].corruptor = norm_corrptor
         self._task_observables['time'].corruptor = norm_corrptor
         self._task_observables['distance'].corruptor = norm_corrptor
 
-    def _distance_w2t(self, physics):  # w2t: whip to target
-        target = self.entities.target.target_body
-        source = self.entities.whip.whip_end
-        target_xpos = physics.bind(target).xpos  # a world-frame position
-        source_xpos = physics.bind(source).xpos  # a world-frame position
-        return np.linalg.norm((source_xpos, target_xpos), ord=2)
-
-    def _distance_b2e(self, physics):  # b2e: whip begin to end
-        target = self.entities.whip.whip_begin
-        source = self.entities.whip.whip_end
-        target_xpos = physics.bind(target).xpos  # a world-frame position
-        source_xpos = physics.bind(source).xpos  # a world-frame position
-        return np.linalg.norm((source_xpos, target_xpos), ord=2)
+    def _whip_to_target(self, physics):  # w2t: whip to target
+        whip_pos = physics.bind(self.entities.whip.whip_end).xpos
+        return self.entities.target.global_vector_to_local_frame(physics, whip_pos)
 
     def _hit_detection(self, physics):
         target = self.entities.target.target_body
@@ -292,20 +282,6 @@ class _BasicTask(composer.Task):
                             physics.data.contact.geom2)
         return ((source_id, target_id) in contact_pairs)\
             or ((target_id, source_id) in contact_pairs)
-
-    def _reward_target_close(self, physics):
-        """支线奖励函数: 距离持续递减."""
-        target_distance = self._distance_w2t(physics)
-        return self.stats.previous_target_distance > target_distance
-
-    def _reward_whip_away(self, physics):
-        """支线奖励函数：对鞭子的姿态要求，尽量在空中伸展开."""
-        whip_distance = self._distance_b2e(physics)
-        return self.stats.previous_whip_distance < whip_distance
-
-    def _reward_main_time(self):
-        """TODO:主线奖励函数: 是否在指定时间命中目标."""
-        return 0.0
 
     def show_observables(self):
         """Show the observables."""
@@ -331,29 +307,17 @@ class SingleStepTask(_BasicTask):
                  ):  # pylint: disable=too-many-arguments
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
         self._initial_arm_qpos = np.array([0, 0, 0, 0, 0, 1.5, 0])
-        self._time_limit = 0.5
-        self._max_steps = 1
+        self.time_limit = 0.5
+        self.max_steps = 1
         self.set_timesteps(0.5, 0.002)
         self._observables_config(['arm/arm_joints_qpos', 'arm/arm_joints_qvel',
-                                  'target/target_xpos', 'arm/whip/whip_end_xpos',])
-
-    def before_step(self, physics, action, random_state):
-        self.stats.distance_buffer = []
-        self.stats.timer = physics.time()
-
-    def after_substep(self, physics, random_state):
-        distance = self._distance_w2t(physics)
-        self.stats.distance_buffer.append(distance)
-
-    def after_step(self, physics, random_state):
-        self.stats.step_counter += 1
-        self.stats.distance = np.min(self.stats.distance_buffer)
+                                  'arm/whip/whip_end_xpos','target/target_xpos',])
 
     def should_terminate_episode(self, physics):
-        return self.stats.step_counter >= 1 or physics.time() > self._time_limit
+        return physics.time() > self.time_limit
 
     def get_reward(self, physics):
-        return 1.0 - self.stats.distance
+        return 10 ** -self.stats.distance
 
 
 class TwoStepTask(_BasicTask):

@@ -1,5 +1,5 @@
 exp_name: test
-track: True
+track: False
 seed: 42
 torch_deterministic: True
 wandb_project_name: whipping

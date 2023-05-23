@@ -257,9 +257,9 @@ class Buffer:
                     continue
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], self.global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], self.global_step)
-        target = self.data["obs"][step][-1][-6:-3]
+        obs = self.data["obs"][step][-1]
         episodic_return = infos["final_info"][-1]["episode"]["r"]
-        print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Target={target}")
+        print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Obs={obs}")
 
     def GAE(self, agent:Agent, gamma, gae_lambda):
         """Get Generalized Advantage Estimation and Flatten the data into a unified tensor."""

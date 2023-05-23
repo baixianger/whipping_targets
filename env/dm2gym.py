@@ -62,7 +62,7 @@ class WhippingGym(gym.Env):
         self.img_size = img_size
         self.camera_id = camera_id
         self.task, self.env = make_dm_env(env_id, **kwargs)
-        self.max_step = self.env.task._max_steps
+        self.max_step = self.env.task.max_steps
         self.control_min = self.env.action_spec().minimum.astype(np.float32)
         self.control_max = self.env.action_spec().maximum.astype(np.float32)
         self.control_shape = self.env.action_spec().shape
