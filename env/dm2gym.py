@@ -35,7 +35,7 @@ def make_gym_env(gamma, **kwargs):
     env = WhippingGym(**kwargs)
     env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    env = gym.wrappers.ClipAction(env)
+    # env = gym.wrappers.ClipAction(env)
     # env = gym.wrappers.NormalizeObservation(env)
     # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
     # if kwargs.get("gamma"):

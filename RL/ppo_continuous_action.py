@@ -125,7 +125,8 @@ class Agent(nn.Module):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
-            action = probs.sample()
+            _action = probs.sample()
+            action = self._clip_action(_action)
         log_prob = probs.log_prob(action).sum(1, keepdim=True)
         return action, log_prob, probs.entropy().sum(1, keepdim=True)
 
@@ -136,6 +137,10 @@ class Agent(nn.Module):
     def _rescale_action(self, action):
         """Rescale action from [0, 1] to [low, high]."""
         return action * (self.action_high - self.action_low) + self.action_low
+
+    def _clip_action(self, action):
+        """Clip action to [low, high]."""
+        return torch.clamp(action, self.action_low, self.action_high)
 
 class Buffer:
     """Buffer for offline RL
