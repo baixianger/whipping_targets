@@ -64,7 +64,7 @@ def test(cfg: DictConfig):
     env.task.entities.target.set_pose(env.task._target_pos())
 
     env.physics.bind(env.task.entities.arm.arm_joints).qpos = np.array([3, 3, 3, 3, 3, 3, 3])
-    # IPython.embed()
+    IPython.embed()
     # # Launch the viewer application.
     # viewer.launch(env, policy=random_policy)
 

@@ -86,38 +86,30 @@ class RandomPos(variation.Variation):  # pylint: disable=too-few-public-methods
 @dataclasses.dataclass
 class TaskRunningStats: # pylint: disable=too-many-instance-attributes
     """Running statistics for the task.
-    
-    attributes:
-        step_counter: int, the current step number taken in a episode
-        timer: float, mujoco physics time at the start of current step
-        time: int, the time when the target is hit
-        distance: float, the aggregated target distance for current control step
-        distance_buffer: list, the target distance list for current control step
-        previous_time: int, the time when the target is hit in the previous control step
-        previous_target_distance: float, the previous target distance
-    methods:
-        reset: reset the statistics
-    
     """
     step_counter: int = 0
     timer: float = 0.0 # mujoco physics time at the start of current step
     time: int = float('inf')
-    distance: float = float('inf')
-    distance_buffer: list = dataclasses.field(default_factory=list)
-    previous_time: int = 0
-    previous_target_distance: float = float('inf')
-    previous_whip_distance: float = 0
+    a2t: float = float('inf')
+    a2t_buffer: list = dataclasses.field(default_factory=list)
+    w2t: float = float('inf')
+    w2t_buffer: list = dataclasses.field(default_factory=list)
+    old_time: int = 0
+    old_a2t: float = float('inf')
+    old_w2t: float = 0
 
     def reset(self):
         """Reset the statistics."""
         self.step_counter = 0
         self.timer = 0.0
         self.time = float('inf')
-        self.distance = float('inf')
-        self.distance_buffer = []
-        self.previous_time = 0
-        self.previous_target_distance = float('inf')
-        self.previous_whip_distance = 0
+        self.a2t = float('inf')
+        self.a2t_buffer = []
+        self.w2t = float('inf')
+        self.w2t_buffer = []
+        self.old_time = 0
+        self.old_a2t = float('inf')
+        self.old_w2t = float('inf')
 
 
 @dataclasses.dataclass
@@ -224,7 +216,8 @@ class _BasicTask(composer.Task):
 
         self._task_observables = {}
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
-        self._task_observables['distance'] = observable.Generic(lambda x: self.stats.distance)
+        self._task_observables['w2t'] = observable.Generic(lambda x: self.stats.w2t)
+        self._task_observables['a2t'] = observable.Generic(lambda x: self.stats.a2t)
 
         if obs_noise is not None:
             self._set_noise(obs_noise)
@@ -252,18 +245,21 @@ class _BasicTask(composer.Task):
         self.entities.target.set_pose(physics, self._target_pos(random_state))
 
     def before_step(self, physics, action, random_state):
-        self.stats.distance_buffer = []
+        self.stats.w2t_buffer = []
+        self.stats.a2t_buffer = []
         self.stats.timer = physics.time()
         physics.set_control(action)
 
     def after_substep(self, physics, random_state):
-        vector = self._whip_to_target(physics)
-        distance = np.linalg.norm(vector)
-        self.stats.distance_buffer.append(distance)
+        w2t = self._whip_to_target(physics)
+        self.stats.w2t_buffer.append(w2t)
+        a2t = self._arm_to_target(physics)
+        self.stats.a2t_buffer.append(a2t)
 
     def after_step(self, physics, random_state):
         self.stats.step_counter += 1
-        self.stats.distance = np.min(self.stats.distance_buffer)
+        self.stats.w2t = np.min(self.stats.w2t_buffer)
+        self.stats.a2t = np.min(self.stats.a2t_buffer)
 
     def get_reward(self, physics):
         return 1.0
@@ -286,12 +282,20 @@ class _BasicTask(composer.Task):
         self.entities.whip.observables.whip_end_xpos.corruptor = norm_corrptor
         self.entities.target.observables.target_xpos.corruptor = norm_corrptor
         self._task_observables['time'].corruptor = norm_corrptor
-        self._task_observables['distance'].corruptor = norm_corrptor
+        self._task_observables['w2t'].corruptor = norm_corrptor
+        self._task_observables['a2t'].corruptor = norm_corrptor
 
     def _whip_to_target(self, physics):  # w2t: whip to target
         # 一个内置的计算方法
         # self.entities.target.global_vector_to_local_frame(physics, whip_pos)
         source = physics.bind(self.entities.whip.whip_end).xpos
+        target = physics.bind(self.entities.target.target_body).xpos
+        return np.linalg.norm(source - target)
+
+    def _arm_to_target(self, physics):  # a2t: arm to target
+        # 一个内置的计算方法
+        # self.entities.target.global_vector_to_local_frame(physics, ee_site_pos)
+        source = physics.bind(self.entities.arm.end_effector_site).xpos
         target = physics.bind(self.entities.target.target_body).xpos
         return np.linalg.norm(source - target)
 
@@ -332,6 +336,7 @@ class SingleStepTask(_BasicTask):
         self.max_steps = 1
         self.set_timesteps(1, 0.002)
         self._observables_config(['arm/arm_joints_qpos',
+                                  'arm/whip/whip_begin_xpos',
                                   'arm/whip/whip_end_xpos',
                                   'target/target_xpos'])
 
@@ -339,7 +344,7 @@ class SingleStepTask(_BasicTask):
         return physics.time() > self.time_limit
 
     def get_reward(self, physics):
-        return 10 ** -self.stats.distance
+        return (1 -self.stats.w2t) + (1 - self.stats.a2t)
 
 
 class TwoStepTask(_BasicTask):
@@ -357,14 +362,13 @@ class TwoStepTask(_BasicTask):
                  **kwargs
                  ):  # pylint: disable=too-many-arguments
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
-        self._initial_arm_qpos = np.array([0, 0, 0, 0, 0, 1.5, 0])
-        self._target_pos = RandomPos(
-            (1, 1.5), (1, 1.5), (-5/4 * np.pi, -3/4 * np.pi))
-        self._time_limit = 1
+        self._time_limit = 2
         self._max_steps = 2
         self.set_timesteps(0.5, 0.002)
-        self._observables_config(['arm/arm_joints_qpos', 'arm/arm_joints_qacc',
-                                  'time', 'distance'])
+        self._observables_config(['arm/arm_joints_qpos'
+                                  'arm/whip/whip_begin_xpos',
+                                  'arm/whip/whip_end_xpos',
+                                  'target/target_xpos'])
         self._fixed_time = fixed_time
 
     def before_step(self, physics, action, random_state):

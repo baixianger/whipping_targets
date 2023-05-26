@@ -277,8 +277,6 @@ class Buffer:
                 self.data["advantages"][t] = lastgaelam
             self.data["returns"] = self.data["advantages"] + self.data["values"]
 
-
-
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-statements
 # pylint: disable=too-many-branches
@@ -309,7 +307,10 @@ def trainer(config):
     writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
 
     # 3.ENVIRONMENT
-    envs = make_vectorized_envs(**env_args, gamma=ppo_args.gamma)
+    envs = make_vectorized_envs(**env_args,
+                                num_envs=ppo_args.num_envs,
+                                asynchronous=ppo_args.asynchronous,
+                                gamma=ppo_args.gamma)
     assert isinstance(envs.single_action_space, gym.spaces.Box),\
         "only continuous action space is supported"
 
@@ -318,7 +319,7 @@ def trainer(config):
     optimizer = optim.Adam(agent.parameters(), lr=ppo_args.learning_rate, eps=1e-5)
 
     # 6.REPLAY BUFFER
-    buffer = Buffer(agent, envs, ppo_args.buffer_size, env_args.num_envs, ppo_args.batch_size, seed)
+    buffer = Buffer(agent, envs, ppo_args.buffer_size, ppo_args.num_envs, ppo_args.batch_size, seed)
 
     # 7.LEARNING LOOP
     start_time = time.time()

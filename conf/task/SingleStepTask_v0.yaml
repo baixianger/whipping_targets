@@ -1,7 +1,5 @@
 env_id: SingleStepTask-v0
-num_envs: 64 # 256
-asynchronous: True
-ctrl_type: position
+ctrl_type: torque
 whip_type: 0
 whip_nodes: 30
 whip_mass: 0.5
