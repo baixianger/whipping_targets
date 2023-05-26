@@ -1,5 +1,5 @@
 defaults:
-  - task: SingleStepTask_v0
+  - task: SingleStepTask
   - algo: ppo_continuous
 
 

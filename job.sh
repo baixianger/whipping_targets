@@ -1,11 +1,11 @@
 #!/bin/sh
-#BSUB -q gpua10
+#BSUB -q gpuv100
 #BSUB -J Whipping
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"
 ## #BSUB -R "select[model==XeonGold6126]"
 #BSUB -gpu "num=1:mode=exclusive_process"
-#BSUB -W 8:00
+#BSUB -W 10:00
 #BSUB -R "rusage[mem=4GB]"
 #BSUB -u baixianger@gmail.com
 #BSUB -B
@@ -31,6 +31,8 @@ python3 train.py
 # bpeek <job_id>
 # cancel job
 # bkill <job_id>
+# nodestat -F hpc/gpua100/gpuv100/gpua10
+# showstart <job_id>
 
 ## template for batch jobs
 # ref: https://www.hpc.dtu.dk/?page_id=2759

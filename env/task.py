@@ -13,6 +13,8 @@ from dm_control.composer.variation import distributions
 from dm_control.composer.variation import noises
 from dm_control.locomotion.arenas import floors
 
+from dm_control.utils import rewards
+
 from .arm import Arm
 from .whip import Whip
 from .target import Target
@@ -88,28 +90,32 @@ class TaskRunningStats: # pylint: disable=too-many-instance-attributes
     """Running statistics for the task.
     """
     step_counter: int = 0
-    timer: float = 0.0 # mujoco physics time at the start of current step
-    time: int = float('inf')
+    time: int = 0
+    time_buffer: list = dataclasses.field(default_factory=list)
     a2t: float = float('inf')
     a2t_buffer: list = dataclasses.field(default_factory=list)
     w2t: float = float('inf')
     w2t_buffer: list = dataclasses.field(default_factory=list)
-    old_time: int = 0
+    speed: float = 0
+    speed_buffer: list = dataclasses.field(default_factory=list)
     old_a2t: float = float('inf')
     old_w2t: float = 0
+    old_speed: float = 0
 
     def reset(self):
         """Reset the statistics."""
         self.step_counter = 0
-        self.timer = 0.0
-        self.time = float('inf')
+        self.time = 0
+        self.time_buffer = []
         self.a2t = float('inf')
         self.a2t_buffer = []
         self.w2t = float('inf')
         self.w2t_buffer = []
-        self.old_time = 0
+        self.speed = 0
+        self.speed_buffer = []
         self.old_a2t = float('inf')
         self.old_w2t = float('inf')
+        self.old_speed = 0
 
 
 @dataclasses.dataclass
@@ -133,6 +139,20 @@ class TaskEntities:
         self.arm.attach(self.whip, self.arm.end_effector_site)
         self.arena.attach(self.arm)
         self.arena.attach(self.target)
+    
+    def install_sensor(self):
+        """Installs the sensor into the mjcf model."""
+        # self.arena._mjcf_root.sensor.add('clock', name='time')
+        self.arena.mjcf_model.sensor.add('framepos', name='whip_to_target',
+                                         objtype='body', objname=self.target.target_body,
+                                         reftype='body', refname=self.whip.whip_end)
+        self.arena.mjcf_model.sensor.add('framepos', name='arm_to_target',
+                                         objtype='body', objname=self.target.target_body,
+                                         reftype='body', refname=self.whip.whip_begin)
+        self.arena.mjcf_model.sensor.add('framelinvel', name='whip_end_vel',
+                                         objtype='body', objname=self.target.target_body,
+                                         reftype='body', refname=self.whip.whip_end)
+
 
 key_frame = np.array([ 1.94554078e-04,  2.14750126e-03,  3.39502991e-05, -3.30299255e-01,
                       -5.63442080e-04,  2.27793041e-02,  1.74814756e-03, -2.01016613e-01,
@@ -186,14 +206,6 @@ class _BasicTask(composer.Task):
         (父)should_terminate_episode: check if the episode should be terminated
 
         show_observables: show the observables
-        _initialize_arm_qpos: initialize the arm qpos
-        _initialize_target_xpos: initialize the target xpos
-        _observables_config: enable the observables needed and add noise/corruptor for subclass
-        _set_noise: set the noise for the observables
-        _distance_w2t: calculate the distance between the whip end and the target
-        _distance_b2e: calculate the distance between the whip begin and the whip end
-        _hit_detection: detect if the whip end hits the target
-        _reward_target_close/_reward_whip_away/_reward_main_time: Supplemental Awards
         """
 
     def __init__(self,
@@ -210,6 +222,7 @@ class _BasicTask(composer.Task):
                                      target=Target(),
                                      arena=floors.Floor(),)
         self.entities.install()
+        self.entities.install_sensor()
         self.all_joints = self.root_entity.mjcf_model.find_all("joint")
         self._mjcf_variator = variation.MJCFVariator()
         self._physics_variator = variation.PhysicsVariator()
@@ -218,6 +231,7 @@ class _BasicTask(composer.Task):
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
         self._task_observables['w2t'] = observable.Generic(lambda x: self.stats.w2t)
         self._task_observables['a2t'] = observable.Generic(lambda x: self.stats.a2t)
+        self._task_observables['speed'] = observable.Generic(lambda x: self.stats.speed)
 
         if obs_noise is not None:
             self._set_noise(obs_noise)
@@ -244,29 +258,12 @@ class _BasicTask(composer.Task):
         physics.bind(self.all_joints).qpos = key_frame
         self.entities.target.set_pose(physics, self._target_pos(random_state))
 
-    def before_step(self, physics, action, random_state):
-        self.stats.w2t_buffer = []
-        self.stats.a2t_buffer = []
-        self.stats.timer = physics.time()
-        physics.set_control(action)
-
-    def after_substep(self, physics, random_state):
-        w2t = self._whip_to_target(physics)
-        self.stats.w2t_buffer.append(w2t)
-        a2t = self._arm_to_target(physics)
-        self.stats.a2t_buffer.append(a2t)
-
-    def after_step(self, physics, random_state):
-        self.stats.step_counter += 1
-        self.stats.w2t = np.min(self.stats.w2t_buffer)
-        self.stats.a2t = np.min(self.stats.a2t_buffer)
-
     def get_reward(self, physics):
         return 1.0
 
     # ----------自定义函数----------
     def _observables_config(self, names):
-        """Enable the observables needed and add noise/corruptor for subclass."""
+        """Enable the observables needed for subclass."""
         for key in names:
             setattr(self.observables[key], 'enabled', True)
 
@@ -284,20 +281,7 @@ class _BasicTask(composer.Task):
         self._task_observables['time'].corruptor = norm_corrptor
         self._task_observables['w2t'].corruptor = norm_corrptor
         self._task_observables['a2t'].corruptor = norm_corrptor
-
-    def _whip_to_target(self, physics):  # w2t: whip to target
-        # 一个内置的计算方法
-        # self.entities.target.global_vector_to_local_frame(physics, whip_pos)
-        source = physics.bind(self.entities.whip.whip_end).xpos
-        target = physics.bind(self.entities.target.target_body).xpos
-        return np.linalg.norm(source - target)
-
-    def _arm_to_target(self, physics):  # a2t: arm to target
-        # 一个内置的计算方法
-        # self.entities.target.global_vector_to_local_frame(physics, ee_site_pos)
-        source = physics.bind(self.entities.arm.end_effector_site).xpos
-        target = physics.bind(self.entities.target.target_body).xpos
-        return np.linalg.norm(source - target)
+        self._task_observables['speed'].corruptor = norm_corrptor
 
     def _hit_detection(self, physics):
         target = self.entities.target.target_body
@@ -334,17 +318,44 @@ class SingleStepTask(_BasicTask):
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
         self.time_limit = 1
         self.max_steps = 1
-        self.set_timesteps(1, 0.002)
+        self.set_timesteps(1, 0.01)
         self._observables_config(['arm/arm_joints_qpos',
                                   'arm/whip/whip_begin_xpos',
                                   'arm/whip/whip_end_xpos',
                                   'target/target_xpos'])
 
+    def before_step(self, physics, action, random_state):
+        self.stats.w2t_buffer = []
+        self.stats.a2t_buffer = []
+        self.stats.speed_buffer = []
+        physics.set_control(action)
+
+    def after_substep(self, physics, random_state):
+        # whip to target vector
+        w2t = physics.named.data.sensordata['whip_to_target']
+        self.stats.w2t_buffer.append(np.linalg.norm(w2t))
+        # arm to target vector
+        a2t = physics.named.data.sensordata['arm_to_target']
+        self.stats.a2t_buffer.append(np.linalg.norm(a2t))
+        # speed on the direction of w2t
+        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
+        self.stats.speed_buffer.append(speed)
+
+    def after_step(self, physics, random_state):
+        self.stats.step_counter += 1
+        self.stats.w2t = np.min(self.stats.w2t_buffer)
+        self.stats.a2t = np.min(self.stats.a2t_buffer)
+        self.stats.speed = np.max(self.stats.speed_buffer)
+
     def should_terminate_episode(self, physics):
         return physics.time() > self.time_limit
 
     def get_reward(self, physics):
-        return (1 -self.stats.w2t) + (1 - self.stats.a2t)
+        """Reward is the sigmoid of the distance's reciprocal between the target and the whip end."""
+        reward_w2t = 2 - self.stats.w2t
+        reward_a2t = 2 - self.stats.a2t
+        reward_speed = self.stats.speed
+        return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed
 
 
 class TwoStepTask(_BasicTask):
@@ -362,18 +373,19 @@ class TwoStepTask(_BasicTask):
                  **kwargs
                  ):  # pylint: disable=too-many-arguments
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
-        self._time_limit = 2
-        self._max_steps = 2
-        self.set_timesteps(0.5, 0.002)
-        self._observables_config(['arm/arm_joints_qpos'
+        self.time_limit = 2
+        self.max_steps = 2
+        self.set_timesteps(0.5, 0.01)
+        self._observables_config(['arm/arm_joints_qpos',
                                   'arm/whip/whip_begin_xpos',
                                   'arm/whip/whip_end_xpos',
                                   'target/target_xpos'])
         self._fixed_time = fixed_time
 
     def before_step(self, physics, action, random_state):
-        self.stats.distance_buffer = []
-        self.stats.timer = physics.time()
+        self.stats.w2t_buffer = []
+        self.stats.a2t_buffer = []
+        self.stats.speed_buffer = []
         if not self._fixed_time:
             n_ratio = int(action[-1] / self.physics_timestep)
             self.control_timestep = n_ratio * self.physics_timestep
@@ -382,28 +394,35 @@ class TwoStepTask(_BasicTask):
             physics.set_control(action)
 
     def after_substep(self, physics, random_state):
-        distance = self._whip_to_target(physics)
-        self.stats.distance_buffer.append(distance)
+        # whip to target vector
+        w2t = physics.named.data.sensordata['whip_to_target']
+        self.stats.w2t_buffer.append(np.linalg.norm(w2t))
+        # arm to target vector
+        a2t = physics.named.data.sensordata['arm_to_target']
+        self.stats.a2t_buffer.append(np.linalg.norm(a2t))
+        # speed on the direction of w2t
+        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
+        self.stats.speed_buffer.append(speed)
 
     def after_step(self, physics, random_state):
         self.stats.step_counter += 1
         if self.stats.step_counter == 1: # 第一步取最远距离
-            self.stats.distance = np.max(self.stats.distance_buffer)
+            self.stats.w2t = np.max(self.stats.w2t_buffer)
+            self.stats.a2t = np.max(self.stats.a2t_buffer)
+            self.stats.speed = - np.min(self.stats.speed_buffer)
         if self.stats.step_counter == 2: # 第二部取最短距离
-            idx = np.argmin(self.stats.distance_buffer)
-            self.stats.distance = self.stats.distance_buffer[idx]
-            if self.stats.distance <= 0.1:
-                self.stats.time = (idx+1) * self.physics_timestep + self.stats.timer
+            self.stats.w2t = np.min(self.stats.w2t_buffer)
+            self.stats.a2t = np.min(self.stats.a2t_buffer)
+            self.stats.speed = np.max(self.stats.speed_buffer)
 
     def should_terminate_episode(self, physics):
-        return self.stats.step_counter >= 2 or physics.time() > self._time_limit
+        return self.stats.step_counter >= self.max_steps or physics.time() > self.time_limit
 
     def get_reward(self, physics):
-        if self.stats.distance >= 2.5 and self.stats.step_counter == 1:
-            return np.clip(3.5 - self.stats.distance, a_min=0, a_max=1)
-        if self.stats.distance <= 1 and self.stats.step_counter == 2:
-            return 1.0 - self.stats.distance
-        return 0.0
+        reward_w2t = 2 - self.stats.w2t
+        reward_a2t = 2 - self.stats.a2t
+        reward_speed = self.stats.speed
+        return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed
 
     def action_spec(self, physics):
         names = [physics.model.id2name(i, 'actuator') or str(i)
@@ -417,8 +436,8 @@ class TwoStepTask(_BasicTask):
         if not self._fixed_time:
             names.append('control_time')
             num_actions += 1
-            minima = np.append(minima, 0)
-            maxima = np.append(maxima, 0.5)
+            minima = np.append(minima, 0.1)
+            maxima = np.append(maxima, 1.0)
         return specs.BoundedArray(shape=(num_actions,),
                                 dtype=np.float32,
                                 minimum=minima,

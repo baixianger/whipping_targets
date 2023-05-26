@@ -411,6 +411,9 @@ def trainer(config):
         RT  = (num_updates - update) * TPU
         print(f"Update={update}, SPS={SPS}, TPU={TPU/60:.2f}min, RT={RT/60:.2f}min", end="\r")
         writer.add_scalar("charts/SPS", SPS, global_step)
+        writer.add_scalar("charts/RestTime", RT, global_step)
+        writer.add_audio("charts/TimePerUpdate", TPU, global_step)
+
 
         # Checkpoints
         freq = 50

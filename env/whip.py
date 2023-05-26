@@ -80,6 +80,11 @@ class Whip(composer.Entity):
         """Returns the whip begin."""
         return self._whip_begin
 
+    @property
+    def whip_joints(self):
+        """Returns the whip joints."""
+        return self._whip_joints
+
     def update_whip_color(self, physics):
         """Updates the activation of the whip."""
         physics.bind(self._model.find_all('geom')).rgba = [1, 0, 0, 1]
