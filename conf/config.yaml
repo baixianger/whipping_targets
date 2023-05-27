@@ -2,7 +2,6 @@ defaults:
   - task: SingleStepTask
   - algo: ppo_continuous
 
-
 exp_name: HPCtest
 track: True
 seed: 42
