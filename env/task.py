@@ -229,9 +229,6 @@ class _BasicTask(composer.Task):
 
         self._task_observables = {}
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
-        self._task_observables['w2t'] = observable.Generic(lambda x: self.stats.w2t)
-        self._task_observables['a2t'] = observable.Generic(lambda x: self.stats.a2t)
-        self._task_observables['speed'] = observable.Generic(lambda x: self.stats.speed)
 
         if obs_noise is not None:
             self._set_noise(obs_noise)
@@ -279,9 +276,6 @@ class _BasicTask(composer.Task):
         self.entities.whip.observables.whip_end_xpos.corruptor = norm_corrptor
         self.entities.target.observables.target_xpos.corruptor = norm_corrptor
         self._task_observables['time'].corruptor = norm_corrptor
-        self._task_observables['w2t'].corruptor = norm_corrptor
-        self._task_observables['a2t'].corruptor = norm_corrptor
-        self._task_observables['speed'].corruptor = norm_corrptor
 
     def _hit_detection(self, physics):
         target = self.entities.target.target_body
@@ -423,6 +417,87 @@ class TwoStepTask(_BasicTask):
         reward_a2t = 2 - self.stats.a2t
         reward_speed = self.stats.speed
         return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed
+
+    def action_spec(self, physics):
+        names = [physics.model.id2name(i, 'actuator') or str(i)
+                for i in range(physics.model.nu)]
+        num_actions = physics.model.nu
+        is_limited = physics.model.actuator_ctrllimited.ravel().astype(bool)
+        control_range = physics.model.actuator_ctrlrange
+        minima = np.full(num_actions, fill_value=-mujoco.mjMAXVAL, dtype=np.float32)
+        maxima = np.full(num_actions, fill_value=mujoco.mjMAXVAL, dtype=np.float32)
+        minima[is_limited], maxima[is_limited] = control_range[is_limited].T
+        if not self._fixed_time:
+            names.append('control_time')
+            num_actions += 1
+            minima = np.append(minima, 0.1)
+            maxima = np.append(maxima, 1.0)
+        return specs.BoundedArray(shape=(num_actions,),
+                                dtype=np.float32,
+                                minimum=minima,
+                                maximum=maxima,
+                                name='\t'.join(names))
+
+
+class MultiStepTask(_BasicTask):
+    """A specific task that only using two more control steps.
+    """
+    def __init__(self,
+                 ctrl_type='torque',
+                 whip_type=0,
+                 target=None,
+                 obs_noise=None,
+                 fixed_time=True,
+                 **kwargs
+                 ):  # pylint: disable=too-many-arguments
+        super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
+        self.time_limit = 1
+        self.max_steps = 50
+        self.set_timesteps(0.02, 0.01)
+        self._observables_config(['arm/arm_joints_qpos',
+                                  'arm/arm_joints_qvel',
+                                  'arm/arm_joints_qacc',
+                                  'arm/whip/whip_begin_xpos',
+                                  'arm/whip/whip_end_xpos',
+                                  'target/target_xpos'])
+        self._fixed_time = fixed_time
+        self._is_success = False
+
+    def before_step(self, physics, action, random_state):
+        if not self._fixed_time:
+            n_ratio = int(action[-1] / self.physics_timestep)
+            self.control_timestep = n_ratio * self.physics_timestep
+            physics.set_control(action[:-1])
+        else:
+            physics.set_control(action)
+        w2t = physics.named.data.sensordata['whip_to_target']
+        self.stats.old_w2t = np.linalg.norm(w2t)
+
+    def after_substep(self, physics, random_state):
+        w2t = physics.named.data.sensordata['whip_to_target']
+        if np.linalg.norm(w2t) < 0.1:
+            self._is_success = True
+
+    def after_step(self, physics, random_state):
+        self.stats.step_counter += 1
+        w2t = physics.named.data.sensordata['whip_to_target']
+        self.stats.w2t = np.linalg.norm(w2t)
+        # speed on the direction of w2t
+        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
+        self.stats.speed = speed
+
+    def should_terminate_episode(self, physics):
+        return (self.stats.step_counter >= self.max_steps
+                or physics.time() > self.time_limit
+                or self._is_success)
+
+    def get_reward(self, physics):
+        reward_w2t = 2 - self.stats.w2t
+        reward_a2t = 2 - self.stats.a2t
+        reward_speed = self.stats.speed
+        reward_close = 10 * (self.stats._old_w2t - self.stats.w2t)
+        reward_success = 10 if self._is_success else 0
+        return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed + reward_success + reward_close
 
     def action_spec(self, physics):
         names = [physics.model.id2name(i, 'actuator') or str(i)
