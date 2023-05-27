@@ -33,9 +33,10 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 def head(in_features, hidden_dims, init_func=layer_init, **kwargs):
     """Create a head template for actor and critic (aka. Agent network)"""
-    layers = []
-    for in_dim, out_dim in zip((in_features,)+hidden_dims, hidden_dims):
-        layers.append(init_func(nn.Linear(in_dim, out_dim)), **kwargs)
+    layers = [] # 下面in_features如果是numpy.int64类型，会报错，所以要转换成int类型
+    in_features = int(in_features) if isinstance(in_features, np.integer) else in_features
+    for in_dim, out_dim in zip((in_features,)+hidden_dims, hidden_dims):  
+        layers.append(init_func(nn.Linear(in_dim, out_dim), **kwargs))
         layers.append(nn.Tanh())
     return nn.Sequential(*layers)
 
@@ -63,8 +64,8 @@ class Agent(nn.Module):
         )
 
         # POLICY NETWORK
-        self.action_low = torch.tensor(envs.single_action_space.low).float().to(next(self.parameters()).device)
-        self.action_high = torch.tensor(envs.single_action_space.high).float().to(next(self.parameters()).device)
+        self.register_buffer("action_low", torch.tensor(envs.single_action_space.low).float())
+        self.register_buffer("action_high", torch.tensor(envs.single_action_space.high).float())
         if action_dist == "normal":
             self.actor_mean = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
@@ -79,7 +80,7 @@ class Agent(nn.Module):
                 )
             self._policy = self._get_normal_action
         elif action_dist == "beta":
-            self.activation = nn.Softmax()
+            self.softplus = nn.Softplus()
             self.actor_alpha = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
                 layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
@@ -107,9 +108,10 @@ class Agent(nn.Module):
         return self.critic(x)
 
     def _get_beta_action(self, x, action=None):
-        action_alpha = (self.activation(self.actor_alpha(x)) + 1)
-        action_beta = (self.activation(self.actor_beta(x)) + 1)
+        action_alpha = (self.softplus(self.actor_alpha(x)) + 1)
+        action_beta = (self.softplus(self.actor_beta(x)) + 1)
         probs = Beta(action_alpha, action_beta)
+        # mean = alpha / (alpha + beta)
         if action is None:
             _action = probs.sample()
             log_prob = probs.log_prob(_action).sum(1, keepdim=True)
@@ -320,7 +322,7 @@ def trainer(config):
         "only continuous action space is supported"
 
     # 4.AGENT INITIALIZATION
-    agent = Agent(envs).to(device)
+    agent = Agent(envs, ppo_args.hidden_dims, ppo_args.action_dist).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=ppo_args.learning_rate, eps=1e-5)
 
     # 6.REPLAY BUFFER
@@ -407,12 +409,12 @@ def trainer(config):
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         SPS = int(global_step / (time.time() - start_time))
-        TPU = (time.time() - start_time) / update
-        RT  = (num_updates - update) * TPU
+        TPU = int((time.time() - start_time) / update)
+        RT  = int((num_updates - update) * TPU)
         print(f"Update={update}, SPS={SPS}, TPU={TPU/60:.2f}min, RT={RT/60:.2f}min", end="\r")
         writer.add_scalar("charts/SPS", SPS, global_step)
         writer.add_scalar("charts/RestTime", RT, global_step)
-        writer.add_audio("charts/TimePerUpdate", TPU, global_step)
+        writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
 
 
         # Checkpoints

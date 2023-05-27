@@ -19,9 +19,9 @@ nvidia-smi
 ## Load the cuda module
 # module load cuda/11.8
 
-# python3 ./utils/data_loader.py
-python3 train.py
 
+python3 train.py task=TwoStepTask task.fixed_time=False
+# python3 train.py
 ## Tutorial about LSF
 # submit job
 # bsub < job.sh

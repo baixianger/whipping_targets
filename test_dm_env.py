@@ -2,20 +2,13 @@
 # pylint: disable=import-error
 # pylint: disable=line-too-long
 import IPython
-from omegaconf import DictConfig, OmegaConf
-import hydra
 from dm_control import mjcf
 from dm_control import viewer
 from dm_control import composer
 import numpy as np
 from env.task import SingleStepTask
 
-
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def test(cfg: DictConfig):
-    """Test for PPO"""
-    print(OmegaConf.to_yaml(cfg))
-    print(type(cfg.algo.target_kl))
+def test():
 
     task = SingleStepTask(
         ctrl_type="position",
