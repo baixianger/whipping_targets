@@ -116,13 +116,13 @@ class ArmObservables(composer.Observables):
     def arm_joints_qacc(self):
         """Returns the qacc of the arm joints."""
         arm_joints = self._entity.arm_joints
-        return observable.MJCFFeature('qacc', arm_joints, aggregator='max')
+        return observable.MJCFFeature('qacc', arm_joints)
 
     @composer.observable
     def arm_joints_qfrc(self):
         """Returns the qfrc of the arm joints."""
         arm_joints = self._entity.arm_joints
-        return observable.MJCFFeature('qfrc_applied', arm_joints, aggregator='max')
+        return observable.MJCFFeature('qfrc_applied', arm_joints)
 
 
 class Arm(composer.Entity):

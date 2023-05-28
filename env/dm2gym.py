@@ -46,14 +46,10 @@ def make_gym_env(gamma, **kwargs):
 def make_dm_env(env_id, **kwargs):
     """Create a dm_control environment."""
     task_list = TaskDict().task_list
-    task_setting = TaskDict().task_setting
     if task_list.get(env_id) is None:
         raise ValueError(f"Unsupported environment: {env_id}, \
                          it should be one of {task_list.keys()}.")
-    if kwargs:
-        dm_task = task_list[env_id](**kwargs)
-    else:
-        dm_task = task_list[env_id](task_setting[env_id])
+    dm_task = task_list[env_id](**kwargs)
     return dm_task, composer.Environment(task=dm_task)
 
 class WhippingGym(gym.Env):

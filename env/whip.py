@@ -89,9 +89,9 @@ class Whip(composer.Entity):
         """Updates the activation of the whip."""
         physics.bind(self._model.find_all('geom')).rgba = [1, 0, 0, 1]
 
-    def _make_model(self, wtype=0):
+    def _make_model(self, whip_type=0):
         """Returns an MJCF model of a Whip."""
-        if wtype not in [0, 1]:
+        if whip_type not in [0, 1]:
             raise ValueError("whip type must be 0 or 1")
 
         model = mjcf.RootElement(model='whip')
@@ -109,12 +109,12 @@ class Whip(composer.Entity):
         for i in range(_COUNT):
             temp_body.add('joint', name=f'J0_{i}', **whip_params['joint0'])
             temp_body.add('joint', name=f'J1_{i}', **whip_params['joint1'])
-            if wtype == 0:
+            if whip_type == 0:
                 temp_body.add('geom',  name=f'G0_{i}',
                               material=whip_material, **whip_params['sphere'])
                 temp_body.add('geom',  name=f'G1_{i}',
                               material=whip_material, **whip_params['cylinder'])
-            elif wtype == 1:
+            elif whip_type == 1:
                 temp_body.add('geom',  name=f'G0_{i}',
                               material=whip_material, **whip_params['capsule'])
             name = f'B{i+1}' if i != _COUNT - 1 else 'whip_end'
@@ -125,7 +125,7 @@ class Whip(composer.Entity):
 def test():
     """Test the whip."""
     for i in range(2):
-        whip = Whip(wtype=i)
+        whip = Whip(whip_type=i)
         mjcf_model = whip.mjcf_model
         xml = mjcf_model.to_xml_string()
         # save to file

@@ -92,14 +92,14 @@ class TaskRunningStats: # pylint: disable=too-many-instance-attributes
     step_counter: int = 0
     time: int = 0
     time_buffer: list = dataclasses.field(default_factory=list)
-    a2t: float = float('inf')
+    a2t: float = 3
     a2t_buffer: list = dataclasses.field(default_factory=list)
-    w2t: float = float('inf')
+    w2t: float = 4
     w2t_buffer: list = dataclasses.field(default_factory=list)
     speed: float = 0
     speed_buffer: list = dataclasses.field(default_factory=list)
-    old_a2t: float = float('inf')
-    old_w2t: float = 0
+    old_a2t: float = 3
+    old_w2t: float = 4
     old_speed: float = 0
 
     def reset(self):
@@ -107,14 +107,14 @@ class TaskRunningStats: # pylint: disable=too-many-instance-attributes
         self.step_counter = 0
         self.time = 0
         self.time_buffer = []
-        self.a2t = float('inf')
+        self.a2t = 3
         self.a2t_buffer = []
-        self.w2t = float('inf')
+        self.w2t = 4
         self.w2t_buffer = []
         self.speed = 0
         self.speed_buffer = []
-        self.old_a2t = float('inf')
-        self.old_w2t = float('inf')
+        self.old_a2t = 3
+        self.old_w2t = 4
         self.old_speed = 0
 
 
@@ -217,8 +217,8 @@ class _BasicTask(composer.Task):
                  ):  # pylint: disable=too-many-arguments
         self.stats = TaskRunningStats()
 
-        self.entities = TaskEntities(arm=Arm(ctrl_type),
-                                     whip=Whip(whip_type),
+        self.entities = TaskEntities(arm=Arm(ctrl_type=ctrl_type),
+                                     whip=Whip(whip_type=whip_type),
                                      target=Target(),
                                      arena=floors.Floor(),)
         self.entities.install()
@@ -349,7 +349,7 @@ class SingleStepTask(_BasicTask):
         reward_w2t = 2 - self.stats.w2t
         reward_a2t = 2 - self.stats.a2t
         reward_speed = self.stats.speed
-        return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed
+        return reward_w2t + reward_a2t + reward_speed
 
 
 class TwoStepTask(_BasicTask):
@@ -367,7 +367,7 @@ class TwoStepTask(_BasicTask):
                  **kwargs
                  ):  # pylint: disable=too-many-arguments
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
-        self.time_limit = 2
+        self.time_limit = 1
         self.max_steps = 2
         self.set_timesteps(0.5, 0.01)
         self._observables_config(['arm/arm_joints_qpos',
@@ -416,7 +416,7 @@ class TwoStepTask(_BasicTask):
         reward_w2t = 2 - self.stats.w2t
         reward_a2t = 2 - self.stats.a2t
         reward_speed = self.stats.speed
-        return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed
+        return reward_w2t + reward_a2t + reward_speed
 
     def action_spec(self, physics):
         names = [physics.model.id2name(i, 'actuator') or str(i)
@@ -472,6 +472,10 @@ class MultiStepTask(_BasicTask):
             physics.set_control(action)
         w2t = physics.named.data.sensordata['whip_to_target']
         self.stats.old_w2t = np.linalg.norm(w2t)
+        a2t = physics.named.data.sensordata['arm_to_target']
+        self.stats.old_a2t = np.linalg.norm(a2t)
+        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
+        self.stats.old_speed = speed
 
     def after_substep(self, physics, random_state):
         w2t = physics.named.data.sensordata['whip_to_target']
@@ -482,7 +486,8 @@ class MultiStepTask(_BasicTask):
         self.stats.step_counter += 1
         w2t = physics.named.data.sensordata['whip_to_target']
         self.stats.w2t = np.linalg.norm(w2t)
-        # speed on the direction of w2t
+        a2t = physics.named.data.sensordata['arm_to_target']
+        self.stats.a2t = np.linalg.norm(a2t)
         speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
         self.stats.speed = speed
 
@@ -492,12 +497,9 @@ class MultiStepTask(_BasicTask):
                 or self._is_success)
 
     def get_reward(self, physics):
-        reward_w2t = 2 - self.stats.w2t
-        reward_a2t = 2 - self.stats.a2t
-        reward_speed = self.stats.speed
-        reward_close = 10 * (self.stats._old_w2t - self.stats.w2t)
-        reward_success = 10 if self._is_success else 0
-        return reward_w2t + 0.1 * reward_a2t + 0.1 * reward_speed + reward_success + reward_close
+        reward_close = self.stats.old_w2t > self.stats.w2t
+        reward_success = 100 if self._is_success else 0
+        return reward_success + reward_close
 
     def action_spec(self, physics):
         names = [physics.model.id2name(i, 'actuator') or str(i)

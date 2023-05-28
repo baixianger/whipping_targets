@@ -40,6 +40,34 @@ def head(in_features, hidden_dims, init_func=layer_init, **kwargs):
         layers.append(nn.Tanh())
     return nn.Sequential(*layers)
 
+class DistributionScaler(nn.Module):
+    """Scale and rescale action between [low, high] and [0, 1]/[-1, 1]"""
+    def __init__(self, min_max, action_min_max):
+        super().__init__()
+        """min and max canbe [0, 1] for beta, or [-1, 1] for normal"""
+        min, max = min_max # scaled value range
+        range = max - min
+        action_min, action_max = action_min_max # original value range
+        action_range = action_max - action_min
+        self.register_buffer("min", torch.tensor(min).float())
+        self.register_buffer("max", torch.tensor(max).float())
+        self.register_buffer("range", torch.tensor(range).float())
+        self.register_buffer("action_min", torch.tensor(action_min).float())
+        self.register_buffer("action_max", torch.tensor(action_max).float())
+        self.register_buffer("action_range", torch.tensor(action_range).float())
+        
+    def scale(self, action):
+        """把动作标准化到对应的分布的范围"""
+        return ((action - self.action_min ) * self.range) / self.action_range + self.min
+
+    def rescale(self, scaled_action):
+        """把分布的采样结果反标准化到对应的动作范围"""
+        return ((scaled_action - self.min) * self.action_range) / self.range + self.action_min
+
+    def clip(self, action):
+        """Clip action to [low, high]."""
+        return torch.clamp(action, self.action_min, self.action_max)
+
 class Agent(nn.Module):
     """This is a separate MLP networks for policy and value network.
 
@@ -64,9 +92,10 @@ class Agent(nn.Module):
         )
 
         # POLICY NETWORK
-        self.register_buffer("action_low", torch.tensor(envs.single_action_space.low).float())
-        self.register_buffer("action_high", torch.tensor(envs.single_action_space.high).float())
+        action_low = torch.tensor(envs.single_action_space.low).float()
+        action_high = torch.tensor(envs.single_action_space.high).float()
         if action_dist == "normal":
+            self.dist_scaler = DistributionScaler(min_max=(-1, 1), action_min_max=(action_low, action_high))
             self.actor_mean = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
                 layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01), nn.Tanh()
@@ -80,14 +109,15 @@ class Agent(nn.Module):
                 )
             self._policy = self._get_normal_action
         elif action_dist == "beta":
+            self.dist_scaler = DistributionScaler(min_max=(0, 1), action_min_max=(action_low, action_high))
             self.softplus = nn.Softplus()
             self.actor_alpha = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
-                layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
+                layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01),
             )
             self.actor_beta = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
-                layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
+                layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01),
             )
             self._policy = self._get_beta_action
         else:
@@ -108,41 +138,39 @@ class Agent(nn.Module):
         return self.critic(x)
 
     def _get_beta_action(self, x, action=None):
-        action_alpha = (self.softplus(self.actor_alpha(x)) + 1)
-        action_beta = (self.softplus(self.actor_beta(x)) + 1)
+        action_alpha = self.softplus(self.actor_alpha(x)) + 1
+        action_beta = self.softplus(self.actor_beta(x)) + 1
         probs = Beta(action_alpha, action_beta)
         # mean = alpha / (alpha + beta)
         if action is None:
             _action = probs.sample()
-            log_prob = probs.log_prob(_action).sum(1, keepdim=True)
-            action = self._rescale_action(_action)
+            log_prob = probs.log_prob(_action).sum(-1, keepdim=True)
+            action = self.dist_scaler.rescale(_action)
         else:
-            _action = self._scale_action(action)
+            _action = self.dist_scaler.scale(action)
             log_prob = probs.log_prob(_action).sum(1, keepdim=True)
         return action, log_prob, probs.entropy().sum(1, keepdim=True)
 
     def _get_normal_action(self, x, action=None):
+        # print("输入: ", x[0])
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
+        # print("action_mean: ", action_mean[0])
+        # print("action_std: ", action_std[0])
         probs = Normal(action_mean, action_std)
         if action is None:
             _action = probs.sample()
-            action = self._clip_action(_action)
-        log_prob = probs.log_prob(action).sum(1, keepdim=True)
+            log_prob = probs.log_prob(_action).sum(-1, keepdim=True)
+            action = self.dist_scaler.rescale(_action)
+            action = self.dist_scaler.clip(action)
+        else:
+            # print("original action: ", action[0])
+            _action = self.dist_scaler.scale(action)
+            # print("scaled action: ", _action[0])
+            log_prob = probs.log_prob(_action).sum(1, keepdim=True)
         return action, log_prob, probs.entropy().sum(1, keepdim=True)
 
-    def _scale_action(self, action):
-        """Scale action from [low, high] to [0, 1]."""
-        return (action - self.action_low) / (self.action_high - self.action_low)
-
-    def _rescale_action(self, action):
-        """Rescale action from [0, 1] to [low, high]."""
-        return action * (self.action_high - self.action_low) + self.action_low
-
-    def _clip_action(self, action):
-        """Clip action to [low, high]."""
-        return torch.clamp(action, self.action_low, self.action_high)
 
 class Buffer:
     """Buffer for offline RL
@@ -330,7 +358,7 @@ def trainer(config):
 
     # 7.LEARNING LOOP
     start_time = time.time()
-    num_updates = ppo_args.total_timesteps // ppo_args.batch_size
+    num_updates = ppo_args.total_timesteps // ppo_args.buffer_size
     print(f"Start PPO...总更新次数为{num_updates}")
     for update in range(1, num_updates + 1):
 
@@ -343,6 +371,7 @@ def trainer(config):
         # STEP 1: Sampling
         buffer.sampling(agent, envs, writer)
         buffer.GAE(agent, ppo_args.gamma, ppo_args.gae_lambda)
+        # import IPython; IPython.embed()
 
         # STEP 2: Training policy and value network
         #         每次重采样后, 迭代update_epochs次, 默认10
@@ -351,6 +380,7 @@ def trainer(config):
 
         for i in range(ppo_args.update_epochs):
             for obs, actions, logprobs, _, _, values, advantages, returns in buffer:
+                print('开始进行梯度跟新')
                 _, newlogprob, entropy, newvalue = agent(obs, actions) # pylint: disable=not-callable
                 logratio = newlogprob - logprobs
                 ratio = logratio.exp() # pi(a|s) / pi_old(a|s) 重要性采样
@@ -382,6 +412,7 @@ def trainer(config):
 
                 entropy_loss = entropy.mean() # Maximum高斯的熵，多探索
                 loss = pg_loss - ppo_args.ent_coef * entropy_loss + v_loss * ppo_args.vf_coef
+                print("总损失: ", loss)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -411,9 +442,9 @@ def trainer(config):
         SPS = int(global_step / (time.time() - start_time))
         TPU = float((time.time() - start_time) / update / 60)
         RT  = float((num_updates - update) * TPU)
-        print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT:.2f}min", end="\r")
+        print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT/60:.2f}h", end="\r")
         writer.add_scalar("charts/SPS", SPS, global_step)
-        writer.add_scalar("charts/RestTime", RT, global_step)
+        writer.add_scalar("charts/RestTime", RT/60, global_step)
         writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
 
 

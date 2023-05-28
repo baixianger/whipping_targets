@@ -1,6 +1,6 @@
 """Utility functions for Task Submodule."""
 import dataclasses
-from . import SingleStepTask, TwoStepTask
+from . import SingleStepTask, TwoStepTask, MultiStepTask
 # Graphics-related
 import matplotlib
 import matplotlib.animation as animation
@@ -61,18 +61,9 @@ def display_video(frames, framerate=30):
 class TaskDict: # pylint: disable=too-many-ancestors
     """Task dictionary for the Whipping Targets project."""
     task_list = {
-    "SingleStepTask-v0": SingleStepTask,
-    "SingleStepTask-v1": SingleStepTask,
-    "SingleStepTask-v2": SingleStepTask,
-    "SingleStepTask-v3": SingleStepTask,
-    "TwoStepTask-v0": TwoStepTask,
-    "TwoStepTask-v1": TwoStepTask,
-    "TwoStepTask-v2": TwoStepTask,
-    "TwoStepTask-v3": TwoStepTask,
-    "TwoStepTask-v4": TwoStepTask,
-    "TwoStepTask-v5": TwoStepTask,
-    "TwoStepTask-v6": TwoStepTask,
-    "TwoStepTask-v7": TwoStepTask,
+    "SingleStepTask": SingleStepTask,
+    "TwoStepTask": TwoStepTask,
+    "MultiStepTask": MultiStepTask,
     }
 
     task_setting = {
