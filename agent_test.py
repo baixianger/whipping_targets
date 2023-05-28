@@ -11,9 +11,14 @@ single_step_task = SingleStepTask(ctrl_type='position',
 single_step_task.set_timesteps(0.04, 0.02)
 env = composer.Environment(single_step_task)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-# agent = torch.load("SingleStepTask-v0__HPCtest__42__1684881416-update1050.pth",
-#                    map_location=device)
-
+device = torch.device("cpu")
+agent = torch.load("SingleStepTask-v0__HPCtest__42__1685188963-update400.pth",
+                   map_location=device)
+# The operator 'aten::_sample_dirichlet' is not currently implemented for the MPS device. 
+# If you want this op to be added in priority during the prototype phase of this feature, 
+# please comment on https://github.com/pytorch/pytorch/issues/77764. 
+# As a temporary fix, you can set the environment variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. 
+# WARNING: this will be slower than running natively on MPS.
 
 
 def my_policy(time_step):
