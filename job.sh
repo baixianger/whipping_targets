@@ -1,7 +1,7 @@
 #!/bin/sh
-#BSUB -q gpua10
+#BSUB -q gpuv100
 #BSUB -J Whipping
-#BSUB -n 32
+#BSUB -n 24
 #BSUB -R "span[hosts=1]"
 ## #BSUB -R "select[model==XeonGold6126]"
 #BSUB -gpu "num=1:mode=exclusive_process"
@@ -22,8 +22,8 @@ nvidia-smi
 
 # python3 train.py task=TwoStepTask task.target=100 
 # python3 train.py task.target=100
-python3 train.py task.target=100 task.ctrl_type=torque
-# python3 train.py task=MultiStepTask
+# python3 train.py task.target=100 task.ctrl_type=torque
+python3 train.py task=MultiStepTask
 
 
 

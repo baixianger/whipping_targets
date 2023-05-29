@@ -12,6 +12,7 @@ def test(): # pylint: disable=missing-function-docstring
     env = WhippingGym("MultiStepTask")
     env.reset()
     env.step(env.action_space.sample())
+    import IPython; IPython.embed()
 
     envs = make_vectorized_envs(num_envs=4,
                                 asynchronous=True,

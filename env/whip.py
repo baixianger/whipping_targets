@@ -52,6 +52,12 @@ class WhipObservables(composer.Observables):
         whip_end = self._entity.whip_end
         return observable.MJCFFeature('xpos', whip_end)
 
+    @composer.observable
+    def whip_bodys_xpos(self):
+        """Returns the xpos of the whip body nodes."""
+        whip_bodys = self._entity._whip_bodys
+        return observable.MJCFFeature('xpos', whip_bodys)
+
 
 class Whip(composer.Entity):
     """A Whip Entity."""
@@ -61,6 +67,7 @@ class Whip(composer.Entity):
         self._whip_begin = self._model.find('body', 'B0')
         self._whip_end = self._model.find('body', 'whip_end')
         self._whip_joints = self._model.find_all('joint')
+        self._whip_bodys = self._model.find_all('body')
 
     def _build_observables(self):
         """Returns the observables for the whip."""

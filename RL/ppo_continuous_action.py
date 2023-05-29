@@ -49,12 +49,12 @@ class DistributionScaler(nn.Module):
         range = max - min
         action_min, action_max = action_min_max # original value range
         action_range = action_max - action_min
-        self.register_buffer("min", torch.tensor(min).float())
+        self.register_buffer("min", torch.tensor(min).float().clone().detach().requires_grad_(True))
         self.register_buffer("max", torch.tensor(max).float())
-        self.register_buffer("range", torch.tensor(range).float())
-        self.register_buffer("action_min", torch.tensor(action_min).float())
-        self.register_buffer("action_max", torch.tensor(action_max).float())
-        self.register_buffer("action_range", torch.tensor(action_range).float())
+        self.register_buffer("range", torch.tensor(range).float().clone().detach().requires_grad_(True))
+        self.register_buffer("action_min", action_min.clone().detach().requires_grad_(True))
+        self.register_buffer("action_max", action_max.clone().detach().requires_grad_(True))
+        self.register_buffer("action_range", action_range.clone().detach().requires_grad_(True))
         
     def scale(self, action):
         """把动作标准化到对应的分布的范围"""
@@ -380,7 +380,7 @@ def trainer(config):
 
         for i in range(ppo_args.update_epochs):
             for obs, actions, logprobs, _, _, values, advantages, returns in buffer:
-                print('开始进行梯度跟新')
+                # print('开始进行梯度跟新')
                 _, newlogprob, entropy, newvalue = agent(obs, actions) # pylint: disable=not-callable
                 logratio = newlogprob - logprobs
                 ratio = logratio.exp() # pi(a|s) / pi_old(a|s) 重要性采样
@@ -412,7 +412,7 @@ def trainer(config):
 
                 entropy_loss = entropy.mean() # Maximum高斯的熵，多探索
                 loss = pg_loss - ppo_args.ent_coef * entropy_loss + v_loss * ppo_args.vf_coef
-                print("总损失: ", loss)
+                # print("总损失: ", loss)
 
                 optimizer.zero_grad()
                 loss.backward()

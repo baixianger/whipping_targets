@@ -68,7 +68,7 @@ class WhippingGym(gym.Env):
         # Get observation space, flatten the observation
         total_size = 0 # qacc (7,) qpos (1, 7) 自定义的observation为空
         for _, value in self.env.observation_spec().items():
-            total_size += max(value.shape) if len(value.shape) > 0 else 1
+            total_size += np.array(value.shape).prod() if len(value.shape) > 0 else 1
         self._observation_space = spaces.Box(-np.inf, np.inf, (total_size, ))
         self.step_count = 0
         self.reward_range = (-np.inf, np.inf)

@@ -229,6 +229,7 @@ class _BasicTask(composer.Task):
 
         self._task_observables = {}
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
+        self._task_observables['whip_vel'] = observable.Generic(lambda x: x.named.data.sensordata['whip_end_vel'])
 
         if obs_noise is not None:
             self._set_noise(obs_noise)
@@ -274,8 +275,10 @@ class _BasicTask(composer.Task):
         self.entities.arm.observables.arm_joints_qfrc.corruptor = log_corruptor
         self.entities.whip.observables.whip_begin_xpos.corruptor = norm_corrptor
         self.entities.whip.observables.whip_end_xpos.corruptor = norm_corrptor
+        self.entities.whip.observation.whip_bodys_xpos.corruptor = norm_corrptor
         self.entities.target.observables.target_xpos.corruptor = norm_corrptor
         self._task_observables['time'].corruptor = norm_corrptor
+        self._task_observables['whip_vel'].corruptor = norm_corrptor
 
     def _hit_detection(self, physics):
         target = self.entities.target.target_body
@@ -314,9 +317,9 @@ class SingleStepTask(_BasicTask):
         self.max_steps = 1
         self.set_timesteps(1, 0.01)
         self._observables_config(['arm/arm_joints_qpos',
-                                  'arm/whip/whip_begin_xpos',
-                                  'arm/whip/whip_end_xpos',
-                                  'target/target_xpos'])
+                                  'arm/whip/whip_bodys_xpos',
+                                  'whip_vel',
+                                  'target/target_xpos',])
 
     def before_step(self, physics, action, random_state):
         self.stats.w2t_buffer = []
@@ -456,10 +459,9 @@ class MultiStepTask(_BasicTask):
         self.set_timesteps(0.02, 0.01)
         self._observables_config(['arm/arm_joints_qpos',
                                   'arm/arm_joints_qvel',
-                                  'arm/arm_joints_qacc',
-                                  'arm/whip/whip_begin_xpos',
-                                  'arm/whip/whip_end_xpos',
-                                  'target/target_xpos'])
+                                  'arm/whip/whip_bodys_xpos',
+                                  'whip_vel',
+                                  'target/target_xpos',])
         self._fixed_time = fixed_time
         self._is_success = False
 
