@@ -449,7 +449,7 @@ def trainer(config):
 
 
         # Checkpoints
-        freq = 50
+        freq = 10
         if update % freq == 0:
             torch.save(agent, f"checkpoints/{run_name}-update{update}.pth")
             # delete old checkpoints

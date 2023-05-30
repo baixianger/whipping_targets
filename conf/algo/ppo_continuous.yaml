@@ -1,9 +1,9 @@
-total_timesteps: 1000000 # 1000000
+total_timesteps: 2000000 # 1000000
 num_envs: 256 # 256
 asynchronous: True
 buffer_size: 2048 # 256 * 8
 update_epochs: 10 # 10
-batch_size: 64 # 64
+batch_size: 32 # 64
 learning_rate: 3e-4
 anneal_lr: True
 gamma: 0.99
@@ -13,7 +13,7 @@ action_dist: beta
 norm_adv: True
 clip_coef: 0.2
 clip_vloss: True
-ent_coef: 0
+ent_coef: 0.1
 vf_coef: 0.5
 max_grad_norm: 0.5
 target_kl: 

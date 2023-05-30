@@ -1,11 +1,11 @@
 #!/bin/sh
-#BSUB -q gpuv100
+#BSUB -q gpua40
 #BSUB -J Whipping
-#BSUB -n 24
+#BSUB -n 32
 #BSUB -R "span[hosts=1]"
 ## #BSUB -R "select[model==XeonGold6126]"
 #BSUB -gpu "num=1:mode=exclusive_process"
-#BSUB -W 2:00
+#BSUB -W 5:00
 #BSUB -R "rusage[mem=4GB]"
 #BSUB -u baixianger@gmail.com
 #BSUB -B
@@ -19,12 +19,11 @@ nvidia-smi
 ## Load the cuda module
 # module load cuda/11.8
 
-
-# python3 train.py task=TwoStepTask task.target=100 
 # python3 train.py task.target=100
 # python3 train.py task.target=100 task.ctrl_type=torque
-python3 train.py task=MultiStepTask
-
+# python3 train.py task=TwoStepTask task.target=100 
+# python3 train.py task=MultiStepTask
+python3 train.py task.ctrl_type=torque
 
 
 

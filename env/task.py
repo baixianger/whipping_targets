@@ -26,7 +26,7 @@ _HEIGHT_RANGE = (1, 1.5)
 _RADIUS_RANGE = (1, 1.5)
 _HEADING_RANGE = (-np.pi, np.pi)
 
-_FIXED_ARM_QPOS = np.array([0, 0, 0, 0, 0, 0, 0])
+_FIXED_ARM_QPOS = np.array([0, -1.76, 0, 0, 0, 3.75, 0]) # np.array([0, 0, 0, 0, 0, 0, 0])
 _FIXED_TARGET_XPOS = np.array([0, 0, 0.5])
 
 _CONTROL_TIMESTEP = 0.05  # control framerate should be 20Hz
@@ -143,13 +143,23 @@ class TaskEntities:
     def install_sensor(self):
         """Installs the sensor into the mjcf model."""
         # self.arena._mjcf_root.sensor.add('clock', name='time')
+        self.arena.mjcf_model.sensor.add('framepos', name='whip_pos',
+                                         objtype='body', objname=self.whip.whip_end)
+        self.arena.mjcf_model.sensor.add('framepos', name='arm_pos',
+                                         objtype='body', objname=self.whip.whip_begin)
+        self.arena.mjcf_model.sensor.add('framepos', name='target_pos',
+                                         objtype='body', objname=self.target.target_body)
         self.arena.mjcf_model.sensor.add('framepos', name='whip_to_target',
                                          objtype='body', objname=self.target.target_body,
                                          reftype='body', refname=self.whip.whip_end)
         self.arena.mjcf_model.sensor.add('framepos', name='arm_to_target',
                                          objtype='body', objname=self.target.target_body,
                                          reftype='body', refname=self.whip.whip_begin)
-        self.arena.mjcf_model.sensor.add('framelinvel', name='whip_end_vel',
+        self.arena.mjcf_model.sensor.add('framelinvel', name='whip_vel',
+                                         objtype='body', objname=self.whip.whip_end)
+        self.arena.mjcf_model.sensor.add('framelinvel', name='arm_vel',
+                                         objtype='body', objname=self.whip.whip_begin)
+        self.arena.mjcf_model.sensor.add('framelinvel', name='whip_to_target_vel',
                                          objtype='body', objname=self.target.target_body,
                                          reftype='body', refname=self.whip.whip_end)
 
@@ -223,13 +233,21 @@ class _BasicTask(composer.Task):
                                      arena=floors.Floor(),)
         self.entities.install()
         self.entities.install_sensor()
-        self.all_joints = self.root_entity.mjcf_model.find_all("joint")
+        self.arm_joints = self.entities.arm.arm_joints
         self._mjcf_variator = variation.MJCFVariator()
         self._physics_variator = variation.PhysicsVariator()
 
         self._task_observables = {}
         self._task_observables['time'] = observable.Generic(lambda x: self.stats.time)
-        self._task_observables['whip_vel'] = observable.Generic(lambda x: x.named.data.sensordata['whip_end_vel'])
+        self._task_observables['whip_pos'] = observable.Generic(lambda x: x.named.data.sensordata['whip_pos'])
+        self._task_observables['arm_pos'] = observable.Generic(lambda x: x.named.data.sensordata['arm_pos'])
+        self._task_observables['target_pos'] = observable.Generic(lambda x: x.named.data.sensordata['target_pos'])
+        self._task_observables['whip_to_target'] = observable.Generic(lambda x: x.named.data.sensordata['whip_to_target'])
+        self._task_observables['arm_to_target'] = observable.Generic(lambda x: x.named.data.sensordata['arm_to_target'])
+        self._task_observables['whip_vel'] = observable.Generic(lambda x: x.named.data.sensordata['whip_vel'])
+        self._task_observables['arm_vel'] = observable.Generic(lambda x: x.named.data.sensordata['arm_vel'])
+        self._task_observables['whip_to_target_vel'] = observable.Generic(lambda x: x.named.data.sensordata['whip_to_target_vel'])
+
 
         if obs_noise is not None:
             self._set_noise(obs_noise)
@@ -253,7 +271,7 @@ class _BasicTask(composer.Task):
 
     def initialize_episode(self, physics, random_state):
         self._physics_variator.apply_variations(physics, random_state)
-        physics.bind(self.all_joints).qpos = key_frame
+        physics.bind(self.arm_joints).qpos = _FIXED_ARM_QPOS
         self.entities.target.set_pose(physics, self._target_pos(random_state))
 
     def get_reward(self, physics):
@@ -278,7 +296,11 @@ class _BasicTask(composer.Task):
         self.entities.whip.observation.whip_bodys_xpos.corruptor = norm_corrptor
         self.entities.target.observables.target_xpos.corruptor = norm_corrptor
         self._task_observables['time'].corruptor = norm_corrptor
+        self._task_observables['whip_to_target'].corruptor = norm_corrptor
+        self._task_observables['arm_to_target'].corruptor = norm_corrptor
         self._task_observables['whip_vel'].corruptor = norm_corrptor
+        self._task_observables['arm_vel'].corruptor = norm_corrptor
+        self._task_observables['whip_to_target_vel'].corruptor = norm_corrptor
 
     def _hit_detection(self, physics):
         target = self.entities.target.target_body
@@ -318,8 +340,17 @@ class SingleStepTask(_BasicTask):
         self.set_timesteps(1, 0.01)
         self._observables_config(['arm/arm_joints_qpos',
                                   'arm/whip/whip_bodys_xpos',
+                                  'arm/whip/whip_begin_xpos',
+                                  'arm/whip/whip_end_xpos',
+                                  'target/target_xpos',
+                                  'whip_pos',
+                                  'arm_pos',
+                                  'target_pos',
+                                  'whip_to_target',
+                                  'arm_to_target',
                                   'whip_vel',
-                                  'target/target_xpos',])
+                                  'arm_vel',
+                                  'whip_to_target_vel'])
 
     def before_step(self, physics, action, random_state):
         self.stats.w2t_buffer = []
@@ -335,7 +366,8 @@ class SingleStepTask(_BasicTask):
         a2t = physics.named.data.sensordata['arm_to_target']
         self.stats.a2t_buffer.append(np.linalg.norm(a2t))
         # speed on the direction of w2t
-        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
+        w2t_vel = physics.named.data.sensordata['whip_to_target_vel']
+        speed = np.linalg.norm(w2t_vel)
         self.stats.speed_buffer.append(speed)
 
     def after_step(self, physics, random_state):
@@ -456,7 +488,7 @@ class MultiStepTask(_BasicTask):
         super().__init__(ctrl_type, whip_type, target, obs_noise, **kwargs)
         self.time_limit = 1
         self.max_steps = 50
-        self.set_timesteps(0.02, 0.01)
+        self.set_timesteps(0.02, 0.005)
         self._observables_config(['arm/arm_joints_qpos',
                                   'arm/arm_joints_qvel',
                                   'arm/whip/whip_bodys_xpos',
@@ -476,8 +508,6 @@ class MultiStepTask(_BasicTask):
         self.stats.old_w2t = np.linalg.norm(w2t)
         a2t = physics.named.data.sensordata['arm_to_target']
         self.stats.old_a2t = np.linalg.norm(a2t)
-        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
-        self.stats.old_speed = speed
 
     def after_substep(self, physics, random_state):
         w2t = physics.named.data.sensordata['whip_to_target']
@@ -490,8 +520,6 @@ class MultiStepTask(_BasicTask):
         self.stats.w2t = np.linalg.norm(w2t)
         a2t = physics.named.data.sensordata['arm_to_target']
         self.stats.a2t = np.linalg.norm(a2t)
-        speed = physics.named.data.sensordata['whip_end_vel'] @ (w2t / np.linalg.norm(w2t))
-        self.stats.speed = speed
 
     def should_terminate_episode(self, physics):
         return (self.stats.step_counter >= self.max_steps
@@ -499,7 +527,7 @@ class MultiStepTask(_BasicTask):
                 or self._is_success)
 
     def get_reward(self, physics):
-        reward_close = self.stats.old_w2t > self.stats.w2t
+        reward_close = 10 * (self.stats.old_w2t - self.stats.w2t)
         reward_success = 100 if self._is_success else 0
         return reward_success + reward_close
 

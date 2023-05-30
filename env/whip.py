@@ -5,7 +5,7 @@ from dm_control.composer.observation import observable
 
 _COUNT = 30 # number of links in the whip
 _MASS = 0.5 # mass of the whip
-_LENGTH = 1 # length of the whip
+_LENGTH = 0.6 # length of the whip
 
 _UNIT_L = _LENGTH / _COUNT
 _UNIT_M = _MASS / _COUNT
@@ -64,7 +64,7 @@ class Whip(composer.Entity):
     def _build(self, *args, **kwargs):
         """Initializes the whip."""
         self._model = self._make_model(**kwargs)
-        self._whip_begin = self._model.find('body', 'B0')
+        self._whip_begin = self._model.find('body', 'whip')
         self._whip_end = self._model.find('body', 'whip_end')
         self._whip_joints = self._model.find_all('joint')
         self._whip_bodys = self._model.find_all('body')
