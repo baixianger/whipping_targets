@@ -267,6 +267,8 @@ class Buffer:
             self.is_flatten = False
 
         for step in range(0, self.buffer_steps): # batch = steps * envs
+            # s_1, d_1 executes a_1 gets r_1, s_2, d_2, 
+            # s_2, d_2 executes a_2 gets r_2, s_3, d_3
             self.global_step += 1 * self.buffer_batch  # 总采样次数
             self.data["obs"][step] = self.next_obs     # (buffer_batch, obs_dim)
             self.data["dones"][step] = self.next_done  # (buffer_batch, 1)
@@ -305,10 +307,10 @@ class Buffer:
                     nextnonterminal = 1.0 - self.next_done
                     nextvalues = next_value
                 else:
-                    nextnonterminal = 1.0 - self.data["dones"][t + 1]
+                    nextnonterminal = 1.0 - self.data["dones"][t+1] # 如果buffer中间的某步完成了, v_next = 0, 否则v_next = v(s_t+1)
                     nextvalues = self.data["values"][t + 1]
-                delta = self.data["rewards"][t] + gamma * nextvalues * nextnonterminal - self.data["values"][t]
-                lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
+                delta = self.data["rewards"][t] + gamma * (nextvalues * nextnonterminal) - self.data["values"][t]
+                lastgaelam = delta + gamma * gae_lambda * (nextnonterminal * lastgaelam)
                 self.data["advantages"][t] = lastgaelam
             self.data["returns"] = self.data["advantages"] + self.data["values"]
 
@@ -393,12 +395,12 @@ def trainer(config):
                 if ppo_args.norm_adv: # 在minibatch范围内归一化advantage
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-                # Policy loss
+                # Policy loss: 最大化期望的reward, 也就是最大化advantage
                 pg_loss1 = -advantages * ratio
                 pg_loss2 = -advantages * torch.clamp(ratio, 1 - ppo_args.clip_coef, 1 + ppo_args.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                # Value loss
+                # Value loss: 值函数V(s)是return的期望,或所有possible return的期望。
                 newvalue = newvalue.view(-1)
                 if ppo_args.clip_vloss:
                     v_loss_unclipped = (newvalue - returns) ** 2
@@ -427,6 +429,7 @@ def trainer(config):
         returns = buffer.data["returns"].view(-1)
         y_pred, y_true = values.cpu().numpy(), returns.cpu().numpy()
         var_y = np.var(y_true)
+        # 一种简单的回归评估方式. explained_var越接近1, 表示预测值对真实值的变化解释越好, 模型表现越好.
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
