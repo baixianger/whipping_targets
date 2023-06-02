@@ -8,7 +8,7 @@ learning_rate: 3e-4
 anneal_lr: True
 gamma: 0.99
 gae_lambda: 0.95
-hidden_dims: [128, 256, 64, 32]
+hidden_dims: [128, 64, 32]
 action_dist: beta
 norm_adv: True
 clip_coef: 0.2

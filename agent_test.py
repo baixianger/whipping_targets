@@ -2,14 +2,14 @@
 from dm_control import composer, viewer
 import numpy as np
 import torch
-from env.easy_task import SingStepTaskSimple
+from env.easy_task import SingleStepTaskSimple
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
-agent = torch.load("checkpoints/SingStepTaskSimple__HPCtest__42__1685454905-update30.pth", map_location=device)
+agent = torch.load("checkpoints/SingleStepTaskSimple__HPCtest__42__1685454905-update30.pth", map_location=device)
 
-task = SingStepTaskSimple()
+task = SingleStepTaskSimple()
 task.time_limit = 1
 task.set_timesteps(0.01, 0.01)
 env = composer.Environment(task)

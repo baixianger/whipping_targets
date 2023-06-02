@@ -1,5 +1,5 @@
 defaults:
-  - task: SingleStepTask
+  - task: SingleStepTaskSimple
   - algo: ppo_continuous
 
 exp_name: HPCtest

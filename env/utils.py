@@ -1,7 +1,7 @@
 """Utility functions for Task Submodule."""
 import dataclasses
 from .task import SingleStepTask, TwoStepTask, MultiStepTask
-from .easy_task import SingStepTaskSimple
+from .easy_task import SingleStepTaskSimple
 # Graphics-related
 import matplotlib
 import matplotlib.animation as animation
@@ -64,7 +64,7 @@ class TaskDict: # pylint: disable=too-many-ancestors
     "SingleStepTask": SingleStepTask,
     "TwoStepTask": TwoStepTask,
     "MultiStepTask": MultiStepTask,
-    "SingStepTaskSimple": SingStepTaskSimple,
+    "SingleStepTaskSimple": SingleStepTaskSimple,
     }
 
     task_setting = {

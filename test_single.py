@@ -9,11 +9,11 @@ from RL.ppo_continuous_action import Agent
 
 def test(): # pylint: disable=missing-function-docstring
     """Module test"""
-    env = WhippingGym("SingStepTaskSimple")
+    env = WhippingGym("SingleStepTaskSimple")
     env.reset()
     env.step(env.action_space.sample())
 
-    envs = make_vectorized_envs(env_id="SingStepTaskSimple",
+    envs = make_vectorized_envs(env_id="SingleStepTaskSimple",
                                 num_envs=4,
                                 asynchronous=True,
                                 gamma=0.99,

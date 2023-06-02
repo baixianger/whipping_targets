@@ -5,6 +5,7 @@ import numpy as np
 from dm_control import mjcf
 from dm_control import composer
 from dm_control.composer.observation import observable
+from .task import RandomPos
 
 
 # pylint: disable=invalid-name
@@ -26,6 +27,7 @@ class TaskRunningStats: # pylint: disable=too-many-instance-attributes
     old_a2t: float = 3
     old_w2t: float = 4
     old_speed: float = 0
+    is_hitted: bool = False
 
     def reset(self):
         """Reset the statistics."""
@@ -41,6 +43,7 @@ class TaskRunningStats: # pylint: disable=too-many-instance-attributes
         self.old_a2t = 3
         self.old_w2t = 4
         self.old_speed = 0
+        self.is_hitted = False
 
 class Scene(composer.Entity):
     """A 7-DOF Panda arm."""
@@ -49,7 +52,7 @@ class Scene(composer.Entity):
         """Initializes the arm."""
         self._model = mjcf.from_path('env/xml/scene.xml')
         self._arm_joints = [self._model.find_all('joint')[i] for i in [0,1,2,3,4,5,6]]
-        self._actuator = self._model.find_all('actuator')
+        self._actuators = self._model.find_all('actuator')
         self._whip_start = self._model.find('body', 'whip_start')
         self._whip_end = self._model.find('body', 'whip_end')
         self._whip_bodies = [self._model.find('body', f"N{i:02d}") for i in range(27)]
@@ -65,12 +68,8 @@ class Scene(composer.Entity):
     def mjcf_model(self):
         return self._model
 
-    @property
-    def actuators(self):
-        """Returns a tuple containing the actuators in this arm."""
-        return self._actuators
 
-class SingStepTaskSimple(composer.Task):
+class SingleStepTaskSimple(composer.Task):
     """basic task for whipping expriments"""
     def __init__(self, **kwargs):  # pylint: disable=too-many-arguments
         self.stats = TaskRunningStats()
@@ -82,13 +81,13 @@ class SingStepTaskSimple(composer.Task):
         self.whip_bodies = self.scene._whip_bodies
         self.target = self.scene._target
         self.target_site = self.scene._target_site
+        self.actuators = self.scene._actuators
         self.sensors = self.scene._sensors
         
-        self.set_timesteps(0.5, 0.002)
         self.num_substeps = 250
         self.max_steps = 1
         self.time_limit = 0.5
-        self.is_hitted = False
+        self.set_timesteps(self.time_limit, 0.002)
 
         self._task_observables = {}
         self._task_observables['target'] = observable.MJCFFeature('xpos', self.target)
@@ -111,6 +110,9 @@ class SingStepTaskSimple(composer.Task):
         for obs in self._task_observables.values():
             obs.enabled = True
 
+        if kwargs.get('target', False):
+            self.random_pos = RandomPos()
+
     @property
     def root_entity(self):
         return self.scene
@@ -122,6 +124,11 @@ class SingStepTaskSimple(composer.Task):
     def initialize_episode_mjcf(self, random_state):
         self.stats.reset()
 
+    def initialize_episode(self, physics, random_state):
+        if hasattr(self, 'random_pos'):
+            pos = self.random_pos()
+            physics.bind(self.target).xpos = pos
+
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
         self.stats.w2t_buffer = []
@@ -129,14 +136,19 @@ class SingStepTaskSimple(composer.Task):
         self.stats.speed_buffer = []
 
     def after_substep(self, physics, random_state):
-        target_xpos = physics.bind(self.target).xpos
-        whip_start_xpos = physics.bind(self.whip_start).xpos
-        whip_end_xpos = physics.bind(self.whip_end).xpos
-        self.stats.w2t_buffer.append(np.linalg.norm(target_xpos - whip_end_xpos))
-        self.stats.a2t_buffer.append(np.linalg.norm(target_xpos - whip_start_xpos))
-        speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
-                @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
-        self.stats.speed_buffer.append(speed)
+        if not self.stats.is_hitted:
+            target_xpos = physics.bind(self.target).xpos
+            whip_start_xpos = physics.bind(self.whip_start).xpos
+            whip_end_xpos = physics.bind(self.whip_end).xpos
+            self.stats.w2t_buffer.append(np.linalg.norm(target_xpos - whip_end_xpos))
+            self.stats.a2t_buffer.append(np.linalg.norm(target_xpos - whip_start_xpos))
+            speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
+                    @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
+            self.stats.speed_buffer.append(speed)
+            if physics.named.data.sensordata['hit'] > 1:
+                self.stats.is_hitted = True
+                self.after_hit(physics)
+
 
     def after_step(self, physics, random_state):
         self.stats.w2t = np.min(self.stats.w2t_buffer)
@@ -150,16 +162,19 @@ class SingStepTaskSimple(composer.Task):
         """Reward is the sigmoid of the distance's reciprocal between the target and the whip end."""
         reward_w2t = 1 - self.stats.w2t
         reward_speed = self.stats.speed
+        if self.stats.is_hitted:
+            return 10 + 0.5 * reward_speed + reward_w2t
         if self.stats.a2t < 0.1:
-            self.is_hitted = True
-            return 10 + reward_speed + reward_w2t
-        return reward_w2t + reward_speed
+            return 5 + 0.5 * reward_speed + reward_w2t
+        return reward_w2t + 0.5 * reward_speed
     
     def show_observables(self):
         """Show the observables."""
         for key, value in self.observables.items():
             print(f'{key:<30}', value)
 
-
+    def after_hit(self, physics):
+        """Change the color and size of the target."""
+        self.target.geom[0].rgba = (0.96, 0.38, 0.08, 0.9)
 
 

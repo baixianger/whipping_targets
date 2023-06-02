@@ -1,5 +1,5 @@
 #!/bin/sh
-#BSUB -q gpua40
+#BSUB -q gpua10
 #BSUB -J Whipping
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"
@@ -23,7 +23,7 @@ nvidia-smi
 # python3 train.py task.target=100 task.ctrl_type=torque
 # python3 train.py task=TwoStepTask task.target=100 
 # python3 train.py task=MultiStepTask
-python3 train.py task.ctrl_type=torque
+python3 train.py task=SingleStepTaskSimple
 
 
 
@@ -36,7 +36,11 @@ python3 train.py task.ctrl_type=torque
 # bpeek <job_id>
 # cancel job
 # bkill <job_id>
-# nodestat -F hpc/gpua100/gpuv100/gpua10
+# nodestat -F hpc
+# nodestat -F -g gpua100
+# nodestat -F -g gpuv100
+# nodestat -F -g gpua40
+# nodestat -F -g gpua10
 # showstart <job_id>
 
 
