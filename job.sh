@@ -1,5 +1,5 @@
 #!/bin/sh
-#BSUB -q gpua10
+#BSUB -q gpua40
 #BSUB -J Whipping
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"

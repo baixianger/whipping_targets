@@ -24,16 +24,16 @@ def register2gym(env_id, img_size=84, camera_id=0):
                     "camera_id": camera_id}
         )
 
-def make_vectorized_envs(num_envs, asynchronous, gamma, **kwargs):
+def make_vectorized_envs(num_envs, asynchronous, **kwargs):
     """Set vectorized environment."""
-    gym_env_fns = [lambda : make_gym_env(gamma, **kwargs) for _ in range(num_envs)]
+    gym_env_fns = [lambda : make_gym_env(**kwargs) for _ in range(num_envs)]
     if asynchronous:
         return gym.vector.AsyncVectorEnv(gym_env_fns)
     return gym.vector.SyncVectorEnv(gym_env_fns)
 
-def make_gym_env(gamma, **kwargs):
+def make_gym_env(**kwargs):
     env = WhippingGym(**kwargs)
-    env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
+    # env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
     env = gym.wrappers.RecordEpisodeStatistics(env)
     # env = gym.wrappers.ClipAction(env)
     # env = gym.wrappers.NormalizeObservation(env)

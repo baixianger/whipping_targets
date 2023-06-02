@@ -344,10 +344,9 @@ def trainer(config):
     writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
 
     # 3.ENVIRONMENT
-    envs = make_vectorized_envs(**env_args,
-                                num_envs=ppo_args.num_envs,
+    envs = make_vectorized_envs(num_envs=ppo_args.num_envs,
                                 asynchronous=ppo_args.asynchronous,
-                                gamma=ppo_args.gamma)
+                                **env_args,)
     assert isinstance(envs.single_action_space, gym.spaces.Box),\
         "only continuous action space is supported"
 

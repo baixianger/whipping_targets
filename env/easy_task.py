@@ -91,10 +91,10 @@ class SingleStepTaskSimple(composer.Task):
 
         self._task_observables = {}
         self._task_observables['target'] = observable.MJCFFeature('xpos', self.target)
-        self._task_observables['whip_start'] = observable.MJCFFeature('xpos', self.whip_start)
-        self._task_observables['whip_end'] = observable.MJCFFeature('xpos', self.whip_end)
-        self._task_observables['whip_bodies'] = observable.MJCFFeature('xpos', self.whip_bodies)
-        self._task_observables['arm_qpos'] = observable.MJCFFeature('qpos', self.arm_joints)
+        # self._task_observables['whip_start'] = observable.MJCFFeature('xpos', self.whip_start)
+        # self._task_observables['whip_end'] = observable.MJCFFeature('xpos', self.whip_end)
+        # self._task_observables['whip_bodies'] = observable.MJCFFeature('xpos', self.whip_bodies)
+        # self._task_observables['arm_qpos'] = observable.MJCFFeature('qpos', self.arm_joints)
         # self._task_observables['arm_qvel'] = observable.MJCFFeature('qvel', self.arm_joints)
         # self._task_observables['time'] = observable.Generic(lambda x: x.time())
 
@@ -123,11 +123,9 @@ class SingleStepTaskSimple(composer.Task):
 
     def initialize_episode_mjcf(self, random_state):
         self.stats.reset()
-
-    def initialize_episode(self, physics, random_state):
         if hasattr(self, 'random_pos'):
             pos = self.random_pos()
-            physics.bind(self.target).xpos = pos
+            self.target.pos = pos
 
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
@@ -136,18 +134,17 @@ class SingleStepTaskSimple(composer.Task):
         self.stats.speed_buffer = []
 
     def after_substep(self, physics, random_state):
-        if not self.stats.is_hitted:
-            target_xpos = physics.bind(self.target).xpos
-            whip_start_xpos = physics.bind(self.whip_start).xpos
-            whip_end_xpos = physics.bind(self.whip_end).xpos
-            self.stats.w2t_buffer.append(np.linalg.norm(target_xpos - whip_end_xpos))
-            self.stats.a2t_buffer.append(np.linalg.norm(target_xpos - whip_start_xpos))
-            speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
-                    @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
-            self.stats.speed_buffer.append(speed)
-            if physics.named.data.sensordata['hit'] > 1:
-                self.stats.is_hitted = True
-                self.after_hit(physics)
+        target_xpos = physics.bind(self.target).xpos
+        whip_start_xpos = physics.bind(self.whip_start).xpos
+        whip_end_xpos = physics.bind(self.whip_end).xpos
+        self.stats.w2t_buffer.append(np.linalg.norm(target_xpos - whip_end_xpos))
+        self.stats.a2t_buffer.append(np.linalg.norm(target_xpos - whip_start_xpos))
+        speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
+                @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
+        self.stats.speed_buffer.append(speed)
+        if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
+            self.stats.is_hitted = True
+            self.after_hit(physics)
 
 
     def after_step(self, physics, random_state):
@@ -162,10 +159,6 @@ class SingleStepTaskSimple(composer.Task):
         """Reward is the sigmoid of the distance's reciprocal between the target and the whip end."""
         reward_w2t = 1 - self.stats.w2t
         reward_speed = self.stats.speed
-        if self.stats.is_hitted:
-            return 10 + 0.5 * reward_speed + reward_w2t
-        if self.stats.a2t < 0.1:
-            return 5 + 0.5 * reward_speed + reward_w2t
         return reward_w2t + 0.5 * reward_speed
     
     def show_observables(self):
