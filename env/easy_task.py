@@ -159,7 +159,7 @@ class SingleStepTaskSimple(composer.Task):
         """Reward is the sigmoid of the distance's reciprocal between the target and the whip end."""
         reward_w2t = 1 - self.stats.w2t
         reward_speed = self.stats.speed
-        return reward_w2t + 0.5 * reward_speed
+        return reward_w2t
     
     def show_observables(self):
         """Show the observables."""
