@@ -18,105 +18,10 @@ from dm_control.utils import rewards
 from .arm import Arm
 from .whip import Whip
 from .target import Target
+from. utils import FixedRandomPos, RandomPos, TaskRunningStats, _FIXED_ARM_QPOS
 
 # pylint: disable=invalid-name
 # pylint: disable=unused-argument
-
-_HEIGHT_RANGE = (1, 1.5)
-_RADIUS_RANGE = (1, 1.5)
-_HEADING_RANGE = (-np.pi, np.pi)
-
-_FIXED_ARM_QPOS = np.array([0, -1.76, 0, 0, 0, 3.75, 0]) # np.array([0, 0, 0, 0, 0, 0, 0])
-_FIXED_TARGET_XPOS = np.array([0, 0, 0.5])
-
-_CONTROL_TIMESTEP = 0.05  # control framerate should be 20Hz
-_PHYSICS_TIMESTEP = 0.002  # physics framerate should be 500Hz
-
-
-def sigmoid(x):  # pylint: disable=missing-function-docstring,invalid-name
-    """Sigmoid function."""
-    return 1 / (1 + np.exp(-x))
-
-class FixedRandomPos():
-    """A fixed target position generator."""
-    # pylint: disable=too-many-arguments
-    def __init__(self,
-                 hight_range=_HEIGHT_RANGE,
-                 radius_range=_RADIUS_RANGE,
-                 heading_range=_HEADING_RANGE,
-                 n=100, seed=42, **kwargs):
-        if n == 0: # debug for RL algorithm only hit fixed target
-            self.n = 1
-            self.targets = np.array([[-1, 0, 1]])
-        else:
-            self.n = n
-            self.targets = self.target_pos_generator(hight_range, radius_range, heading_range, n, seed)
-
-    def target_pos_generator(self, hight_range, radius_range, heading_range, n, seed=42):
-        """Generate a random target position. Shape is (n, 3)."""
-        np.random.seed(seed) # only works inside the function scope
-        iz = np.random.uniform(*hight_range, n)
-        rad = np.random.uniform(*radius_range, n)
-        theta = np.random.uniform(*heading_range, n)
-        ix = rad * np.cos(theta)
-        iy = rad * np.sin(theta)
-        return np.vstack([ix, iy, iz]).T
-
-    def __call__(self, random_state=None):
-        np.random.seed(None)
-        return self.targets[np.random.randint(self.n)]
-
-
-class RandomPos(variation.Variation):  # pylint: disable=too-few-public-methods
-    """A uniformly sampled position for the object."""
-
-    def __init__(self,
-                 hight_range=_HEIGHT_RANGE,
-                 radius_range=_RADIUS_RANGE,
-                 heading_range=_HEADING_RANGE,
-                 **kwargs):
-        self._height = distributions.Uniform(*hight_range)
-        self._radius = distributions.Uniform(*radius_range)
-        self._heading = distributions.Uniform(*heading_range)
-
-    def __call__(self, initial_value=None, current_value=None, random_state=None):
-        radius, heading, height = variation.evaluate(
-            (self._radius, self._heading, self._height), random_state=random_state)
-        return (radius*np.cos(heading), radius*np.sin(heading), height)
-
-
-@dataclasses.dataclass
-class TaskRunningStats: # pylint: disable=too-many-instance-attributes
-    """Running statistics for the task.
-    """
-    step_counter: int = 0
-    time: int = 0
-    time_buffer: list = dataclasses.field(default_factory=list)
-    a2t: float = 3
-    a2t_buffer: list = dataclasses.field(default_factory=list)
-    w2t: float = 4
-    w2t_buffer: list = dataclasses.field(default_factory=list)
-    speed: float = 0
-    speed_buffer: list = dataclasses.field(default_factory=list)
-    old_a2t: float = 3
-    old_w2t: float = 4
-    old_speed: float = 0
-
-    def reset(self):
-        """Reset the statistics."""
-        self.step_counter = 0
-        self.time = 0
-        self.time_buffer = []
-        self.a2t = 3
-        self.a2t_buffer = []
-        self.w2t = 4
-        self.w2t_buffer = []
-        self.speed = 0
-        self.speed_buffer = []
-        self.old_a2t = 3
-        self.old_w2t = 4
-        self.old_speed = 0
-
 
 @dataclasses.dataclass
 class TaskEntities:

@@ -42,31 +42,20 @@ def head(in_features, hidden_dims, init_func=layer_init, **kwargs):
 
 class DistributionScaler(nn.Module):
     """Scale and rescale action between [low, high] and [0, 1]/[-1, 1]"""
-    def __init__(self, min_max, action_min_max):
+    def __init__(self, min, max, _min, _max):
         super().__init__()
-        """min and max canbe [0, 1] for beta, or [-1, 1] for normal"""
-        min, max = min_max # scaled value range
         range = max - min
-        action_min, action_max = action_min_max # original value range
-        action_range = action_max - action_min
-        self.register_buffer("min", torch.tensor(min).float().clone().detach().requires_grad_(True))
-        self.register_buffer("max", torch.tensor(max).float())
-        self.register_buffer("range", torch.tensor(range).float().clone().detach().requires_grad_(True))
-        self.register_buffer("action_min", action_min.clone().detach().requires_grad_(True))
-        self.register_buffer("action_max", action_max.clone().detach().requires_grad_(True))
-        self.register_buffer("action_range", action_range.clone().detach().requires_grad_(True))
+        _range = _max - _min
+        self.register_buffer("weight", _range / range)
+        self.register_buffer("bias", - min * _range / range + _min)
+        self.register_buffer("_weight", range / _range)
+        self.register_buffer("_bias", - _min * range / _range + min)
         
     def scale(self, action):
-        """把动作标准化到对应的分布的范围"""
-        return ((action - self.action_min ) * self.range) / self.action_range + self.min
+        return action * self.weight + self.bias
 
-    def rescale(self, scaled_action):
-        """把分布的采样结果反标准化到对应的动作范围"""
-        return ((scaled_action - self.min) * self.action_range) / self.range + self.action_min
-
-    def clip(self, action):
-        """Clip action to [low, high]."""
-        return torch.clamp(action, self.action_min, self.action_max)
+    def rescale(self, _action):
+        return _action * self._weight + self._bias
 
 class Agent(nn.Module):
     """This is a separate MLP networks for policy and value network.
@@ -80,8 +69,7 @@ class Agent(nn.Module):
         Input: observation, action
         Output: action, logprob, entropy
     """
-    def __init__(self, envs, hidden_dims=(32, 64),
-                 action_dist="normal", independent=True,):
+    def __init__(self, envs, hidden_dims=(32, 64), action_dist="normal"):
         super().__init__()
         hidden_dims = (hidden_dims,) if isinstance(hidden_dims, int) else hidden_dims
 
@@ -95,21 +83,15 @@ class Agent(nn.Module):
         action_low = torch.tensor(envs.single_action_space.low).float()
         action_high = torch.tensor(envs.single_action_space.high).float()
         if action_dist == "normal":
-            self.dist_scaler = DistributionScaler(min_max=(-1, 1), action_min_max=(action_low, action_high))
+            self.dist_scaler = DistributionScaler(action_low, action_high, -1, 1)
             self.actor_mean = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
                 layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01), nn.Tanh()
             )
-            if independent:
-                self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
-            else:
-                self.actor_logstd = nn.Sequential(
-                    head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
-                    layer_init(nn.Linear(hidden_dims[-1], np.prod(envs.single_action_space.shape)), std=0.01)
-                )
+            self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
             self._policy = self._get_normal_action
         elif action_dist == "beta":
-            self.dist_scaler = DistributionScaler(min_max=(0, 1), action_min_max=(action_low, action_high))
+            self.dist_scaler = DistributionScaler(action_low, action_high, 0, 1)
             self.softplus = nn.Softplus()
             self.actor_alpha = nn.Sequential(
                 head(np.array(envs.single_observation_space.shape).prod(), hidden_dims, layer_init),
@@ -152,22 +134,17 @@ class Agent(nn.Module):
         return action, log_prob, probs.entropy().sum(1, keepdim=True)
 
     def _get_normal_action(self, x, action=None):
-        # print("输入: ", x[0])
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
-        # print("action_mean: ", action_mean[0])
-        # print("action_std: ", action_std[0])
         probs = Normal(action_mean, action_std)
         if action is None:
             _action = probs.sample()
+            _action = torch.clamp(_action, -1, 1)
             log_prob = probs.log_prob(_action).sum(-1, keepdim=True)
             action = self.dist_scaler.rescale(_action)
-            action = self.dist_scaler.clip(action)
         else:
-            # print("original action: ", action[0])
             _action = self.dist_scaler.scale(action)
-            # print("scaled action: ", _action[0])
             log_prob = probs.log_prob(_action).sum(1, keepdim=True)
         return action, log_prob, probs.entropy().sum(1, keepdim=True)
 
@@ -318,60 +295,85 @@ class Buffer:
 # pylint: disable=too-many-statements
 # pylint: disable=too-many-branches
 def trainer(config):
-    """Train PPO algorithm with offline RL."""
+    """Train PPO algorithm with online RL."""
+
+    ######### 0. CONFIG #########
     exp_name = config.exp_name
-    env_id = config.task.env_id
-    ppo_args = config.algo         # alogrithm related arguments
-    env_args = config.task         # task related arguments
-    device = torch.device("cpu")
+    track = config.track
+    wandb_project_name = config.wandb_project_name
+    wandb_entity = config.wandb_entity
+    seed = config.seed
+    torch_deterministic = config.torch_deterministic
     if config.cuda:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     elif config.mps:
         device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    else:
+        device = torch.device("cpu")
+    env_id = config.task.env_id
+    env_args = config.task.env_args
+    num_envs = config.algo.num_envs
+    asynchronous = config.algo.asynchronous
+    total_timesteps =  config.algo.total_timesteps
+    buffer_size = config.algo.buffer_size
+    update_epochs = config.algo.update_epochs
+    batch_size = config.algo.batch_size
+    learning_rate = config.algo.learning_rate
+    anneal_lr = config.algo.anneal_lr
+    gamma = config.algo.gamma
+    gae_lambda = config.algo.gae_lambda
+    hidden_dims = config.algo.hidden_dims
+    action_dist = config.algo.action_dist
+    norm_adv = config.algo.norm_adv
+    clip_coef = config.algo.clip_coef
+    clip_vloss = config.algo.clip_vloss
+    ent_coef = config.algo.ent_coef
+    vf_coef = config.algo.vf_coef
+    max_grad_norm = config.algo.max_grad_norm
+    target_kl = config.algo.target_kl
+    save_freq = config.algo.save_freq
 
-    # 1.SEEDING
-    seed = config.seed
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = config.torch_deterministic
 
-    # 2.PROFILING wandb setting
-    track = config.track
-    wandb_project_name = config.wandb_project_name
-    wandb_entity = config.wandb_entity
+
+    ########## 1. SEED #########
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.backends.cudnn.deterministic = torch_deterministic
+
+    ########## 2. LOGGER ##########
     run_name = set_run_name(env_id, exp_name, seed, int(time.time()))
     writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
 
-    # 3.ENVIRONMENT
-    envs = make_vectorized_envs(num_envs=ppo_args.num_envs,
-                                asynchronous=ppo_args.asynchronous,
+    ########## 3. ENVIRONMENT #########
+    envs = make_vectorized_envs(num_envs=num_envs,
+                                asynchronous=asynchronous,
                                 **env_args,)
     assert isinstance(envs.single_action_space, gym.spaces.Box),\
         "only continuous action space is supported"
 
-    # 4.AGENT INITIALIZATION
-    agent = Agent(envs, ppo_args.hidden_dims, ppo_args.action_dist).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=ppo_args.learning_rate, eps=1e-5)
+    ########## 4. AGENT ##########
+    agent = Agent(envs, hidden_dims, action_dist).to(device)
+    optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
 
-    # 6.REPLAY BUFFER
-    buffer = Buffer(agent, envs, ppo_args.buffer_size, ppo_args.num_envs, ppo_args.batch_size, seed)
+    ########## 5. ROLLOUT BUFFER ##########
+    buffer = Buffer(agent, envs, buffer_size, num_envs, batch_size, seed)
 
-    # 7.LEARNING LOOP
+    ########## 6. TRAINING ##########
     start_time = time.time()
-    num_updates = ppo_args.total_timesteps // ppo_args.buffer_size
+    num_updates = total_timesteps // buffer_size
     print(f"Start PPO...总更新次数为{num_updates}")
+    
     for update in range(1, num_updates + 1):
-
-        # learning rate decay from learning_rate to 0
-        if ppo_args.anneal_lr:
+        if anneal_lr:
             frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * ppo_args.learning_rate
+            lrnow = frac * learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
         # STEP 1: Sampling
         buffer.sampling(agent, envs, writer)
-        buffer.GAE(agent, ppo_args.gamma, ppo_args.gae_lambda)
+        buffer.GAE(agent, gamma, gae_lambda)
         # import IPython; IPython.embed()
 
         # STEP 2: Training policy and value network
@@ -379,7 +381,7 @@ def trainer(config):
         #         设计迭代次数是update_epochs * (buffer_size / batch_size)
         clipfracs = []
 
-        for i in range(ppo_args.update_epochs):
+        for i in range(update_epochs):
             for obs, actions, logprobs, _, _, values, advantages, returns in buffer:
                 # print('开始进行梯度跟新')
                 _, newlogprob, entropy, newvalue = agent(obs, actions) # pylint: disable=not-callable
@@ -389,22 +391,21 @@ def trainer(config):
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > ppo_args.clip_coef).float().mean().item()]
+                    clipfracs += [((ratio - 1.0).abs() > clip_coef).float().mean().item()]
 
-                if ppo_args.norm_adv: # 在minibatch范围内归一化advantage
+                if norm_adv: # 在minibatch范围内归一化advantage
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
                 # Policy loss: 最大化期望的reward, 也就是最大化advantage
                 pg_loss1 = -advantages * ratio
-                pg_loss2 = -advantages * torch.clamp(ratio, 1 - ppo_args.clip_coef, 1 + ppo_args.clip_coef)
+                pg_loss2 = -advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss: 值函数V(s)是return的期望,或所有possible return的期望。
                 newvalue = newvalue.view(-1)
-                if ppo_args.clip_vloss:
+                if clip_vloss:
                     v_loss_unclipped = (newvalue - returns) ** 2
-                    v_clipped = values + torch.clamp(newvalue - values,
-                                                     -ppo_args.clip_coef, ppo_args.clip_coef,)
+                    v_clipped = values + torch.clamp(newvalue - values, -clip_coef,clip_coef,)
                     v_loss_clipped = (v_clipped - returns) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
@@ -412,16 +413,15 @@ def trainer(config):
                     v_loss = 0.5 * ((newvalue - returns) ** 2).mean()
 
                 entropy_loss = entropy.mean() # Maximum高斯的熵，多探索
-                loss = pg_loss - ppo_args.ent_coef * entropy_loss + v_loss * ppo_args.vf_coef
-                # print("总损失: ", loss)
+                loss = pg_loss - ent_coef * entropy_loss + v_loss * vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), ppo_args.max_grad_norm)
+                nn.utils.clip_grad_norm_(agent.parameters(), max_grad_norm)
                 optimizer.step()
 
-            if ppo_args.target_kl is not None:
-                if approx_kl > ppo_args.target_kl:
+            if target_kl is not None:
+                if approx_kl > target_kl:
                     break
 
         values = buffer.data["values"].view(-1)
@@ -451,12 +451,12 @@ def trainer(config):
 
 
         # Checkpoints
-        freq = 10
-        if update % freq == 0:
+
+        if update % save_freq == 0:
             torch.save(agent, f"checkpoints/{run_name}-update{update}.pth")
             # delete old checkpoints
             for filename in os.listdir("checkpoints"):
-                if filename == f"{run_name}-update{update-freq}.pth":
+                if filename == f"{run_name}-update{update-save_freq}.pth":
                     os.remove(f"checkpoints/{filename}")
     # Final save
     torch.save(agent, f"checkpoints/{run_name}-update{update}.pth")

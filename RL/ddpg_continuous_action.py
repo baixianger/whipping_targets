@@ -1,5 +1,4 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ddpg/#ddpg_continuous_actionpy
-import argparse
 import os
 import random
 import time
@@ -11,211 +10,154 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import stable_baselines3 as sb3
 from stable_baselines3.common.buffers import ReplayBuffer
-from torch.utils.tensorboard import SummaryWriter
+from torch.distributions.normal import Normal
+from torch.distributions.beta import Beta
+from RL.utils import set_run_name, set_track
+from env.dm2gym import make_vectorized_envs
 
-exp_name = "ddpg_continuous_action"
-speed = 1
-torch_deterministic = True
-cuda = True
-track = False
-wandb_project_name = "cleanRL"
-wandb_entity = None
-capture_video = False
-env_id = "HalfCheetah-v4"
-total_timesteps = 1000000
-learning_rate = 3e-4
-buffer_size = int(1e6)
-gamma = 0.99
-tau = 0.005
-batch_size = 256
-exploration_noise = 0.1
-learning_starts = 25e3
-policy_frequency = 2
-noise_clip = 0.5
-
-
-
-def parse_args():
-    # fmt: off
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
-        help="the name of this experiment")
-    parser.add_argument("--seed", type=int, default=1,
-        help="seed of the experiment")
-    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, `torch.backends.cudnn.deterministic=False`")
-    parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL",
-        help="the wandb's project name")
-    parser.add_argument("--wandb-entity", type=str, default=None,
-        help="the entity (team) of wandb's project")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="whether to capture videos of the agent performances (check out `videos` folder)")
-
-    # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="HalfCheetah-v4",
-        help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=1000000,
-        help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", type=float, default=3e-4,
-        help="the learning rate of the optimizer")
-    parser.add_argument("--buffer-size", type=int, default=int(1e6),
-        help="the replay memory buffer size")
-    parser.add_argument("--gamma", type=float, default=0.99,
-        help="the discount factor gamma")
-    parser.add_argument("--tau", type=float, default=0.005,
-        help="target smoothing coefficient (default: 0.005)")
-    parser.add_argument("--batch-size", type=int, default=256,
-        help="the batch size of sample from the reply memory")
-    parser.add_argument("--exploration-noise", type=float, default=0.1,
-        help="the scale of exploration noise")
-    parser.add_argument("--learning-starts", type=int, default=25e3,
-        help="timestep to start learning")
-    parser.add_argument("--policy-frequency", type=int, default=2,
-        help="the frequency of training policy (delayed)")
-    parser.add_argument("--noise-clip", type=float, default=0.5,
-        help="noise clip parameter of the Target Policy Smoothing Regularization")
-    args = parser.parse_args()
-    # fmt: on
-    return args
-
-
-def make_env(env_id, seed, idx, capture_video, run_name):
-    def thunk():
-        if capture_video:
-            env = gym.make(env_id, render_mode="rgb_array")
-        else:
-            env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        if capture_video:
-            if idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env.action_space.seed(seed)
-        env.observation_space.seed(seed)
-        return env
-
-    return thunk
-
+def head(in_features, hidden_dims, init_func=lambda x:x, **kwargs):
+    """Create a head template for actor and critic (aka. Agent network)"""
+    layers = [] # 下面in_features如果是numpy.int64类型，会报错，所以要转换成int类型
+    in_features = int(in_features) if isinstance(in_features, np.integer) else in_features
+    for in_dim, out_dim in zip((in_features,)+hidden_dims, hidden_dims):  
+        layers.append(init_func(nn.Linear(in_dim, out_dim), **kwargs))
+        layers.append(nn.ReLU())
+    return nn.Sequential(*layers)
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, envs, hidden_dims=(256, 256)):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
-
+        hidden_dims = (hidden_dims,) if isinstance(hidden_dims, int) else hidden_dims
+        input_dim = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
+        self.Q = nn.Sequential(
+                            head(input_dim, hidden_dims),
+                            nn.Linear(hidden_dims[-1], 1),
+                            )
     def forward(self, x, a):
-        x = torch.cat([x, a], 1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-
+        return self.Q(torch.cat([x, a], -1))
 
 class Actor(nn.Module):
-    def __init__(self, env):
+    def __init__(self, envs, hidden_dims=(256, 256)):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc_mu = nn.Linear(256, np.prod(env.single_action_space.shape))
+        hidden_dims = (hidden_dims,) if isinstance(hidden_dims, int) else hidden_dims
+        input_dim = np.array(envs.single_observation_space.shape).prod()
+        output_dim = np.prod(envs.single_action_space.shape).prod()
+        self.actor = nn.Sequential(
+                                head(input_dim, hidden_dims),
+                                nn.Linear(hidden_dims[-1], output_dim),
+                                nn.Tanh(),
+                                )
         # action rescaling
-        self.register_buffer(
-            "action_scale", torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32)
-        )
-        self.register_buffer(
-            "action_bias", torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32)
-        )
+        action_low = torch.tensor(envs.single_action_space.low).float()
+        action_high = torch.tensor(envs.single_action_space.high).float()
+        self.register_buffer("low", action_low)
+        self.register_buffer("high", action_high)
+        self.register_buffer("action_scale", (action_high - action_low) / 2.0)
+        self.register_buffer("action_bias", (action_high + action_low) / 2.0)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = torch.tanh(self.fc_mu(x))
-        return x * self.action_scale + self.action_bias
+        return self.actor(x) * self.action_scale + self.action_bias
 
 
-if __name__ == "__main__":
-    import stable_baselines3 as sb3
-
+def trainer(config):
     if sb3.__version__ < "2.0":
         raise ValueError(
-            """Ongoing migration: run the following command to install the new dependencies:
-
-poetry run pip install "stable_baselines3==2.0.0a1"
-"""
+            "Ongoing migration: run the following command to install the new dependencies\n" + 
+            "pip install \"stable_baselines3==2.0.0a1\""
         )
-    args = parse_args()
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
 
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    ######### 0. CONFIG #########
+    exp_name = config.exp_name
+    track = config.track
+    wandb_project_name = config.wandb_project_name
+    wandb_entity = config.wandb_entity
+    seed = config.seed
+    torch_deterministic = config.torch_deterministic
+    if config.cuda:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    elif config.mps:
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    else:
+        device = torch.device("cpu")
+    env_id = config.task.env_id
+    env_args = config.task.env_args
+    num_envs = config.algo.num_envs
+    asynchronous = config.algo.asynchronous
+    hidden_dims = config.algo.hidden_dims
+    total_timesteps = config.algo.total_timesteps
+    learning_rate = config.algo.learning_rate
+    buffer_size = config.algo.buffer_size
+    batch_size = config.algo.batch_size
+    gamma = config.algo.gamma
+    tau = config.algo.tau
+    exploration_noise = config.algo.exploration_noise
+    learning_starts = config.algo.learning_starts
+    policy_frequency = config.algo.policy_frequency
+    noise_clip = config.algo.noise_clip
+    save_freq = config.algo.save_freq
 
-    # TRY NOT TO MODIFY: seeding
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    ########## 1. SEED #########
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.backends.cudnn.deterministic = torch_deterministic
 
-    # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
-    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    ########## 2. LOGGER ##########
+    run_name = set_run_name(env_id, exp_name, seed, int(time.time()))
+    writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
 
-    actor = Actor(envs).to(device)
-    qf1 = QNetwork(envs).to(device)
-    qf1_target = QNetwork(envs).to(device)
-    target_actor = Actor(envs).to(device)
-    target_actor.load_state_dict(actor.state_dict())
-    qf1_target.load_state_dict(qf1.state_dict())
-    q_optimizer = optim.Adam(list(qf1.parameters()), lr=args.learning_rate)
-    actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.learning_rate)
+    ########## 3. ENVIRONMENT #########
+    envs = make_vectorized_envs(num_envs=num_envs,
+                                asynchronous=asynchronous,
+                                **env_args,)
+    assert isinstance(envs.single_action_space, gym.spaces.Box),\
+        "only continuous action space is supported"
 
+    ########## 4. AGENT ##########
+    actor = Actor(envs, hidden_dims).to(device)
+    Qnet = QNetwork(envs, hidden_dims).to(device)
+    actor_target = Actor(envs, hidden_dims).to(device)
+    Qnet_target = QNetwork(envs, hidden_dims).to(device)
+    actor_target.load_state_dict(actor.state_dict())
+    Qnet_target.load_state_dict(Qnet.state_dict())
+    Qnet_optimizer = optim.Adam(list(Qnet.parameters()), lr=learning_rate)
+    actor_optimizer = optim.Adam(list(actor.parameters()), lr=learning_rate)
+
+    ########## 5. REPLAYBUFFER #########
     envs.single_observation_space.dtype = np.float32
     rb = ReplayBuffer(
-        args.buffer_size,
+        buffer_size,
         envs.single_observation_space,
         envs.single_action_space,
         device,
         handle_timeout_termination=False,
     )
-    start_time = time.time()
 
-    # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset(seed=args.seed)
-    for global_step in range(args.total_timesteps):
-        # ALGO LOGIC: put action logic here
-        if global_step < args.learning_starts:
+    ########## 6. TRAINING #########
+    start_time = time.time()
+    global_step = 0
+    num_updates = total_timesteps // num_envs
+    print(f"Start PPO...总更新次数为{num_updates}")
+    obs, _ = envs.reset(seed=seed)
+    for update in range(1, num_updates + 1):
+        
+        # STEP 1: get actions. If in the initial stage, take random actions, otherwise from the actor
+        if global_step < learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             with torch.no_grad():
                 actions = actor(torch.Tensor(obs).to(device))
-                actions += torch.normal(0, actor.action_scale * args.exploration_noise)
-                actions = actions.cpu().numpy().clip(envs.single_action_space.low, envs.single_action_space.high)
+                actions += torch.normal(0, actor.action_scale * exploration_noise)
+                actions = torch.clamp(actions, actor.low, actor.high).cpu().numpy()
+        global_step += num_envs * update
 
-        # TRY NOT TO MODIFY: execute the game and log data.
+        # STEP 2: execute actions in envs
         next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
-
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-
         if "final_info" in infos:
             for info in infos["final_info"]:
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
@@ -223,50 +165,63 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
                 break
 
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `terminal_observation`
+        # STEP 3: add data to replay buffer
         real_next_obs = next_obs.copy()
         for idx, d in enumerate(truncateds):
-            if d:
+            if d: # In our case, we never truncate the episode
                 real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminateds, infos)
-
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
 
-        # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
-            data = rb.sample(args.batch_size)
+        # STEP 4: Update, if the replay buffer is ready
+        if global_step > learning_starts:
+            data = rb.sample(batch_size)
+
+            # Update Q-Network, minimize the TD-error, delta_Q = Q(s,a) - (r + gamma * Q(s',a'))
             with torch.no_grad():
-                next_state_actions = target_actor(data.next_observations)
-                qf1_next_target = qf1_target(data.next_observations, next_state_actions)
-                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (qf1_next_target).view(-1)
+                next_state_actions = actor_target(data.next_observations)
+                Qnet_next_target = Qnet_target(data.next_observations, next_state_actions)
+                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (Qnet_next_target).view(-1)
 
-            qf1_a_values = qf1(data.observations, data.actions).view(-1)
-            qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
+            Qnet_a_values = Qnet(data.observations, data.actions).view(-1)
+            Qnet_loss = F.mse_loss(Qnet_a_values, next_q_value)
+            Qnet_optimizer.zero_grad()
+            Qnet_loss.backward()
+            Qnet_optimizer.step()
 
-            # optimize the model
-            q_optimizer.zero_grad()
-            qf1_loss.backward()
-            q_optimizer.step()
-
-            if global_step % args.policy_frequency == 0:
-                actor_loss = -qf1(data.observations, actor(data.observations)).mean()
+            # Update Policy network, maximize Q(s,a)
+            if update % policy_frequency == 0:
+                actor_loss = -Qnet(data.observations, actor(data.observations)).mean()
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
 
                 # update the target network
-                for param, target_param in zip(actor.parameters(), target_actor.parameters()):
-                    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
-                    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                for param, target_param in zip(actor.parameters(), actor_target.parameters()):
+                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                for param, target_param in zip(Qnet.parameters(), Qnet_target.parameters()):
+                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-            if global_step % 100 == 0:
-                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
+            if update % 8 == 0: # every 2048 samples
+                writer.add_scalar("losses/Qnet_loss", Qnet_loss.item(), global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
-                print("SPS:", int(global_step / (time.time() - start_time)))
-                writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                writer.add_scalar("losses/Qnet_values", Qnet_a_values.mean().item(), global_step)
+                SPS = int(global_step / (time.time() - start_time))
+                TPU = float((time.time() - start_time) / global_step / 60)
+                RT  = float((num_updates - update) * TPU)
+                print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT/60:.2f}h", end="\r")
+                writer.add_scalar("charts/SPS", SPS, global_step)
+                writer.add_scalar("charts/RestTime", RT/60, global_step)
+                writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
 
+
+            # Checkpoints
+            if update % save_freq == 0:
+                torch.save(actor, f"checkpoints/{run_name}-update{update}.pth")
+                for filename in os.listdir("checkpoints"):
+                    if filename == f"{run_name}-update{update-save_freq}.pth":
+                        os.remove(f"checkpoints/{filename}")
+    # Final save
+    torch.save(actor, f"checkpoints/{run_name}-update{update}.pth")
     envs.close()
     writer.close()

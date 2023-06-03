@@ -4,11 +4,19 @@ import gymnasium as gym
 from gymnasium import spaces
 from gymnasium.envs.registration import register
 from dm_control import composer
-from .utils import TaskDict
+from .task import SingleStepTask, TwoStepTask, MultiStepTask
+from .easy_task import SingleStepTaskSimple
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=too-many-arguments
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
+
+task_list = {
+    "SingleStepTask": SingleStepTask,
+    "TwoStepTask": TwoStepTask,
+    "MultiStepTask": MultiStepTask,
+    "SingleStepTaskSimple": SingleStepTaskSimple,
+    }
 
 def register2gym(env_id, img_size=84, camera_id=0):
     """Register dm_control environment to gym interface.
@@ -45,7 +53,6 @@ def make_gym_env(**kwargs):
 
 def make_dm_env(env_id, **kwargs):
     """Create a dm_control environment."""
-    task_list = TaskDict().task_list
     if task_list.get(env_id) is None:
         raise ValueError(f"Unsupported environment: {env_id}, \
                          it should be one of {task_list.keys()}.")
@@ -59,7 +66,7 @@ class WhippingGym(gym.Env):
         self.img_size = img_size
         self.camera_id = camera_id
         self.task, self.env = make_dm_env(env_id, **kwargs)
-        self.max_step = self.env.task.max_steps
+        self.max_step = 200
         self.control_min = self.env.action_spec().minimum.astype(np.float32)
         self.control_max = self.env.action_spec().maximum.astype(np.float32)
         self.control_shape = self.env.action_spec().shape

@@ -9,7 +9,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 agent = torch.load("checkpoints/SingleStepTaskSimple__HPCtest__42__1685454905-update30.pth", map_location=device)
 
-task = SingleStepTaskSimple()
+task = SingleStepTaskSimple(target=True)
 task.time_limit = 1
 task.set_timesteps(0.01, 0.01)
 env = composer.Environment(task)

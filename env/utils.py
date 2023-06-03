@@ -1,8 +1,8 @@
 """Utility functions for Task Submodule."""
 import dataclasses
-from .task import SingleStepTask, TwoStepTask, MultiStepTask
-from .easy_task import SingleStepTaskSimple
-# Graphics-related
+import numpy as np
+from dm_control.composer import variation
+from dm_control.composer.variation import distributions
 import matplotlib
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -41,43 +41,107 @@ def display_video(frames, framerate=30):
     return HTML(anim.to_html5_video())
 
 
+_HEIGHT_RANGE = (0.8, 1.1)
+_RADIUS_RANGE = (0.8, 1.1)
+_HEADING_RANGE = (-np.pi, np.pi)
 
-# | Task Name     |Version|Control Method|Whip Type|Target Mode|Noise| Action  |
-# |:-------------:|:-----:|:------------:|:-------:|:---------:|:---:|:-------:|
-# |SingleStepTask |v0     |Position      |0:MIT    |100 points |w/o  |fixed0.5s|
-# |SingleStepTask |v1     |Position      |1:Mujoco |100 points |w/o  |fixed0.5s|
-# |SingleStepTask |v3     |Torque        |0:MIT    |100 points |w/o  |fixed0.5s|
-# |SingleStepTask |v4     |Torque        |1:Mujoco |100 points |w/o  |fixed0.5s|
-# |TwoStepTask    |v0     |Position      |0:MIT    |100 points |w/o  |fixed0.5s|
-# |TwoStepTask    |v1     |Position      |0:MIT    |100 points |w/o  |unfixed  |
-# |TwoStepTask    |v2     |Position      |1:Mujoco |100 points |w/o  |fixed0.5s|
-# |TwoStepTask    |v3     |Position      |1:Mujoco |100 points |w/o  |unfixed  |
-# |TwoStepTask    |v4     |Torque        |0:MIT    |100 points |w/o  |fixed0.5s|
-# |TwoStepTask    |v5     |Torque        |0:MIT    |100 points |w/o  |unfixed  |
-# |TwoStepTask    |v6     |Torque        |1:Mujoco |100 points |w/o  |fixed0.5s|
-# |TwoStepTask    |v7     |Torque        |1:Mujoco |100 points |w/o  |unfixed  |
+_FIXED_ARM_QPOS = np.array([0, -1.76, 0, 0, 0, 3.75, 0]) # np.array([0, 0, 0, 0, 0, 0, 0])
+_FIXED_TARGET_XPOS = np.array([0, 0, 0.5])
+
+_RESET_QPOS = np.array(
+    [ -3.9e-07, -0.14,     3.9e-05, -1,       -0.00028,  2,       -0.52,     0.28,    -0.46,     0.16,
+      -0.24,     0.087,   -0.12,     0.045,   -0.062,    0.023,   -0.032,    0.012,   -0.017,    0.0064,  
+      -0.0088,   0.0033,  -0.0046,   0.0017,  -0.0023,   0.00082, -0.0011,   0.00034, -0.00046,  6.7e-05, 
+      -9.4e-05, -8.4e-05,  0.00011, -0.00017,  0.00022, -0.00022,  0.00028, -0.00024,  0.0003,  -0.00025, 
+       0.0003,  -0.00024,  0.00029, -0.00023,  0.00026, -0.0002,   0.00022, -0.00018,  0.00018, -0.00015, 
+       0.00014, -0.00011,  0.0001,  -8e-05,    6.5e-05, -5.1e-05,  3.6e-05, -2.6e-05,  1.6e-05, -9.1e-06, 
+       4.4e-06, ]
+) # 61 dof
+
+_CONTROL_TIMESTEP = 0.05  # control framerate should be 20Hz
+_PHYSICS_TIMESTEP = 0.002  # physics framerate should be 500Hz
+
+
+def sigmoid(x):  # pylint: disable=missing-function-docstring,invalid-name
+    """Sigmoid function."""
+    return 1 / (1 + np.exp(-x))
+
+class FixedRandomPos():
+    """A fixed target position generator."""
+    # pylint: disable=too-many-arguments
+    def __init__(self,
+                 hight_range=_HEIGHT_RANGE,
+                 radius_range=_RADIUS_RANGE,
+                 heading_range=_HEADING_RANGE,
+                 n=100, seed=42, **kwargs):
+        if n == 0: # debug for RL algorithm only hit fixed target
+            self.n = 1
+            self.targets = np.array([[-1, 0, 1]])
+        else:
+            self.n = n
+            self.targets = self.target_pos_generator(hight_range, radius_range, heading_range, n, seed)
+
+    def target_pos_generator(self, hight_range, radius_range, heading_range, n, seed=42):
+        """Generate a random target position. Shape is (n, 3)."""
+        np.random.seed(seed) # only works inside the function scope
+        iz = np.random.uniform(*hight_range, n)
+        rad = np.random.uniform(*radius_range, n)
+        theta = np.random.uniform(*heading_range, n)
+        ix = rad * np.cos(theta)
+        iy = rad * np.sin(theta)
+        return np.vstack([ix, iy, iz]).T
+
+    def __call__(self, random_state=None):
+        np.random.seed(None)
+        return self.targets[np.random.randint(self.n)]
+
+
+class RandomPos(variation.Variation):  # pylint: disable=too-few-public-methods
+    """A uniformly sampled position for the object."""
+
+    def __init__(self,
+                 hight_range=_HEIGHT_RANGE,
+                 radius_range=_RADIUS_RANGE,
+                 heading_range=_HEADING_RANGE,
+                 **kwargs):
+        self._height = distributions.Uniform(*hight_range)
+        self._radius = distributions.Uniform(*radius_range)
+        self._heading = distributions.Uniform(*heading_range)
+
+    def __call__(self, initial_value=None, current_value=None, random_state=None):
+        radius, heading, height = variation.evaluate(
+            (self._radius, self._heading, self._height), random_state=random_state)
+        return (radius*np.cos(heading), radius*np.sin(heading), height)
+
 
 @dataclasses.dataclass
-class TaskDict: # pylint: disable=too-many-ancestors
-    """Task dictionary for the Whipping Targets project."""
-    task_list = {
-    "SingleStepTask": SingleStepTask,
-    "TwoStepTask": TwoStepTask,
-    "MultiStepTask": MultiStepTask,
-    "SingleStepTaskSimple": SingleStepTaskSimple,
-    }
+class TaskRunningStats: # pylint: disable=too-many-instance-attributes
+    """Running statistics for the task.
+    """
+    step_counter: int = 0
+    time: int = 0
+    time_buffer: list = dataclasses.field(default_factory=list)
+    a2t: float = 3
+    a2t_buffer: list = dataclasses.field(default_factory=list)
+    w2t: float = 4
+    w2t_buffer: list = dataclasses.field(default_factory=list)
+    speed: float = 0
+    speed_buffer: list = dataclasses.field(default_factory=list)
+    old_a2t: float = 3
+    old_w2t: float = 4
+    old_speed: float = 0
 
-    task_setting = {
-"SingleStepTask-v0": {"ctrl_type": "poistion", "whip_type": 0, "target": None},
-"SingleStepTask-v1": {"ctrl_type": "poistion", "whip_type": 1, "target": None},
-"SingleStepTask-v2": {"ctrl_type": "torque", "whip_type": 0, "target": None},
-"SingleStepTask-v3": {"ctrl_type": "torque", "whip_type": 1, "target": None},
-"TwoStepTask-v0": {"ctrl_type": "poistion", "whip_type": 0, "target": None, "fixed_time": True},
-"TwoStepTask-v1": {"ctrl_type": "poistion", "whip_type": 0, "target": None, "fixed_time": False},
-"TwoStepTask-v2": {"ctrl_type": "poistion", "whip_type": 1, "target": None, "fixed_time": True},
-"TwoStepTask-v3": {"ctrl_type": "poistion", "whip_type": 1, "target": None, "fixed_time": False},
-"TwoStepTask-v4": {"ctrl_type": "torque", "whip_type": 0, "target": None, "fixed_time": True},
-"TwoStepTask-v5": {"ctrl_type": "torque", "whip_type": 0, "target": None, "fixed_time": False},
-"TwoStepTask-v6": {"ctrl_type": "torque", "whip_type": 1, "target": None, "fixed_time": True},
-"TwoStepTask-v7": {"ctrl_type": "torque", "whip_type": 1, "target": None, "fixed_time": False},
-}
+    def reset(self):
+        """Reset the statistics."""
+        self.step_counter = 0
+        self.time = 0
+        self.time_buffer = []
+        self.a2t = 3
+        self.a2t_buffer = []
+        self.w2t = 4
+        self.w2t_buffer = []
+        self.speed = 0
+        self.speed_buffer = []
+        self.old_a2t = 3
+        self.old_w2t = 4
+        self.old_speed = 0

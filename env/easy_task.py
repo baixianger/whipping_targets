@@ -5,7 +5,7 @@ import numpy as np
 from dm_control import mjcf
 from dm_control import composer
 from dm_control.composer.observation import observable
-from .task import RandomPos
+from. utils import FixedRandomPos, RandomPos, TaskRunningStats, _RESET_QPOS
 
 
 # pylint: disable=invalid-name
@@ -51,6 +51,7 @@ class Scene(composer.Entity):
     def _build(self, *args, **kwargs):
         """Initializes the arm."""
         self._model = mjcf.from_path('env/xml/scene.xml')
+        self._joints = self._model.find_all('joint')
         self._arm_joints = [self._model.find_all('joint')[i] for i in [0,1,2,3,4,5,6]]
         self._actuators = self._model.find_all('actuator')
         self._whip_start = self._model.find('body', 'whip_start')
@@ -74,7 +75,7 @@ class SingleStepTaskSimple(composer.Task):
     def __init__(self, **kwargs):  # pylint: disable=too-many-arguments
         self.stats = TaskRunningStats()
         self.scene = Scene()
-
+        self.joints = self.scene._joints
         self.arm_joints = self.scene._arm_joints
         self.whip_start = self.scene._whip_start
         self.whip_end = self.scene._whip_end
@@ -91,10 +92,10 @@ class SingleStepTaskSimple(composer.Task):
 
         self._task_observables = {}
         self._task_observables['target'] = observable.MJCFFeature('xpos', self.target)
-        # self._task_observables['whip_start'] = observable.MJCFFeature('xpos', self.whip_start)
-        # self._task_observables['whip_end'] = observable.MJCFFeature('xpos', self.whip_end)
+        self._task_observables['whip_start'] = observable.MJCFFeature('xpos', self.whip_start)
+        self._task_observables['whip_end'] = observable.MJCFFeature('xpos', self.whip_end)
         # self._task_observables['whip_bodies'] = observable.MJCFFeature('xpos', self.whip_bodies)
-        # self._task_observables['arm_qpos'] = observable.MJCFFeature('qpos', self.arm_joints)
+        self._task_observables['arm_qpos'] = observable.MJCFFeature('qpos', self.arm_joints)
         # self._task_observables['arm_qvel'] = observable.MJCFFeature('qvel', self.arm_joints)
         # self._task_observables['time'] = observable.Generic(lambda x: x.time())
 
@@ -127,6 +128,10 @@ class SingleStepTaskSimple(composer.Task):
             pos = self.random_pos()
             self.target.pos = pos
 
+    def initialize_episode(self, physics, random_state):
+        assert physics.model.nq == len(_RESET_QPOS)
+        physics.bind(self.joints).qpos = _RESET_QPOS
+
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
         self.stats.w2t_buffer = []
@@ -156,10 +161,7 @@ class SingleStepTaskSimple(composer.Task):
         return physics.time() > self.time_limit
 
     def get_reward(self, physics):
-        """Reward is the sigmoid of the distance's reciprocal between the target and the whip end."""
-        reward_w2t = 1 - self.stats.w2t
-        reward_speed = self.stats.speed
-        return reward_w2t
+        return (10**(1-self.stats.w2t) - 4)
     
     def show_observables(self):
         """Show the observables."""

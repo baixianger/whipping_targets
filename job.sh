@@ -1,7 +1,7 @@
 #!/bin/sh
-#BSUB -q gpuv100
+#BSUB -q gpua40
 #BSUB -J Whipping
-#BSUB -n 24
+#BSUB -n 32
 #BSUB -R "span[hosts=1]"
 ## #BSUB -R "select[model==XeonGold6126]"
 #BSUB -gpu "num=1:mode=exclusive_process"

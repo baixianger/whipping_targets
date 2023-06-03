@@ -2,7 +2,7 @@ defaults:
   - task: SingleStepTaskSimple
   - algo: ppo_continuous
 
-exp_name: HPCtest
+exp_name: 
 track: True
 seed: 42
 torch_deterministic: True

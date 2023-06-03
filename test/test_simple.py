@@ -14,6 +14,7 @@ def test(): # pylint: disable=missing-function-docstring
     dm_task = SingleStepTaskSimple(target=True)
     dm_env = composer.Environment(dm_task)
     dm_env.reset()
+    physics = dm_env.physics
 
     # OpenAI Gym
     gym_env = WhippingGym("SingleStepTaskSimple", target=True)
