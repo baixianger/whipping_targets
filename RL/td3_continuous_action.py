@@ -1,9 +1,9 @@
 """
-DDPG (Deep Deterministic Policy Gradient) for continuous action space, with some tricks:
-    1. Target policy network to compute to an action which approximately maximizes Q(s,a)
-    2. Polyak averaging of the target network.
-    3. Time-correlated OU noise for exploration.
-    4. Delayed update of the policy network (not in the original DDPG).
+TD3 (Twin Delayed DDPG) for continuous action space, with some tricks:
+    1. Twin Q-Networks
+    2. Target Policy Smoothing Regularization
+    3. Delayed Policy Updates
+So, it's less overestimate the Q-values, and more stable than DDPG.
 """
 import os
 import random
@@ -95,6 +95,7 @@ def trainer(config):
     batch_size = config.algo.batch_size
     gamma = config.algo.gamma
     tau = config.algo.tau
+    policy_noise = config.algo.policy_noise
     exploration_noise = config.algo.exploration_noise
     learning_starts = config.algo.learning_starts
     policy_delay = config.algo.policy_delay
@@ -122,13 +123,16 @@ def trainer(config):
 
     ########## 4. AGENT ##########
     actor = Actor(envs, hidden_dims).to(device)
-    Qnet = QNetwork(envs, hidden_dims).to(device)
     actor_target = Actor(envs, hidden_dims).to(device)
-    Qnet_target = QNetwork(envs, hidden_dims).to(device)
     actor_target.load_state_dict(actor.state_dict())
-    Qnet_target.load_state_dict(Qnet.state_dict())
-    Qnet_optimizer = optim.Adam(list(Qnet.parameters()), lr=learning_rate)
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=learning_rate)
+    Qnet1 = QNetwork(envs, hidden_dims).to(device)
+    Qnet2 = QNetwork(envs, hidden_dims).to(device)
+    Qnet1_target = QNetwork(envs, hidden_dims).to(device)
+    Qnet2_target = QNetwork(envs, hidden_dims).to(device)
+    Qnet1_target.load_state_dict(Qnet1.state_dict())
+    Qnet2_target.load_state_dict(Qnet2.state_dict())
+    Qnet_optimizer = optim.Adam(list(Qnet1.parameters()) + list(Qnet2.parameters()), lr=learning_rate)
 
     ########## 5. REPLAYBUFFER #########
     envs.single_observation_space.dtype = np.float32
@@ -137,14 +141,14 @@ def trainer(config):
         envs.single_observation_space,
         envs.single_action_space,
         device,
-        handle_timeout_termination=False,
+        handle_timeout_termination=True,
     )
 
     ########## 6. TRAINING #########
     start_time = time.time()
     global_step = 0
     num_updates = total_timesteps // num_envs
-    print(f"Start DDPG...总更新次数为{num_updates}")
+    print(f"Start TD3...总更新次数为{num_updates}")
     obs, _ = envs.reset(seed=seed)
     for update in range(1, num_updates + 1):
         
@@ -153,7 +157,6 @@ def trainer(config):
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             with torch.no_grad():
-                # TODO: decrease the exploration noise during training
                 actions = actor(torch.Tensor(obs).to(device))
                 actions += torch.normal(0, actor.action_scale * exploration_noise)
                 actions = torch.clamp(actions, actor.low, actor.high).cpu().numpy()
@@ -180,21 +183,31 @@ def trainer(config):
         if global_step > learning_starts:
             data = rb.sample(batch_size)
 
-            # Update Q-Network, minimize the TD-error, delta_Q = Q(s,a) - (r + gamma * Q(s',a'))
+            # Update Twin Q-Network, with clipped noise added to target actions
             with torch.no_grad():
-                next_state_actions = actor_target(data.next_observations)
-                Qnet_next_target = Qnet_target(data.next_observations, next_state_actions)
-                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (Qnet_next_target).view(-1)
+                clipped_noise = (torch.randn_like(data.actions, device=device) * policy_noise).clamp(
+                    -noise_clip, noise_clip
+                ) * actor_target.action_scale
 
-            Qnet_a_values = Qnet(data.observations, data.actions).view(-1)
-            Qnet_loss = F.mse_loss(Qnet_a_values, next_q_value)
+                next_state_actions = (actor_target(data.next_observations) + clipped_noise).clamp(
+                    actor_target.low, actor_target.high
+                )
+                Qnet1_next_target = Qnet1_target(data.next_observations, next_state_actions)
+                Qnet2_next_target = Qnet2_target(data.next_observations, next_state_actions)
+                min_Qnet_next_target = torch.min(Qnet1_next_target, Qnet2_next_target)
+                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (min_Qnet_next_target).view(-1)
+
+            Qnet1_a_values = Qnet1(data.observations, data.actions).view(-1)
+            Qnet2_a_values = Qnet2(data.observations, data.actions).view(-1)
+            Qnet1_loss = F.mse_loss(Qnet1_a_values, next_q_value)
+            Qnet2_loss = F.mse_loss(Qnet2_a_values, next_q_value)
+            Qnet_loss = Qnet1_loss + Qnet2_loss
             Qnet_optimizer.zero_grad()
             Qnet_loss.backward()
             Qnet_optimizer.step()
 
-            # Update Policy network, maximize Q(s,a)
-            if update % policy_delay == 0: # DDPG 原始算法不会延迟更新actor
-                actor_loss = -Qnet(data.observations, actor(data.observations)).mean()
+            if global_step % policy_delay == 0:
+                actor_loss = -Qnet1(data.observations, actor(data.observations)).mean()
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
@@ -202,13 +215,18 @@ def trainer(config):
                 # update the target network
                 for param, target_param in zip(actor.parameters(), actor_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-                for param, target_param in zip(Qnet.parameters(), Qnet_target.parameters()):
+                for param, target_param in zip(Qnet1.parameters(), Qnet1_target.parameters()):
+                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                for param, target_param in zip(Qnet2.parameters(), Qnet2_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
             if update % 8 == 0: # every 2048 samples
-                writer.add_scalar("losses/Qnet_loss", Qnet_loss.item(), global_step)
+                writer.add_scalar("losses/Qnet1_values", Qnet1_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/Qnet2_values", Qnet2_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/Qnet1_loss", Qnet1_loss.item(), global_step)
+                writer.add_scalar("losses/Qnet2_loss", Qnet2_loss.item(), global_step)
+                writer.add_scalar("losses/Qnet_loss", Qnet_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/Qnet_values", Qnet_a_values.mean().item(), global_step)
                 SPS = int(global_step / (time.time() - start_time))
                 TPU = float((time.time() - start_time) / global_step / 60)
                 RT  = float((num_updates - update) * TPU)
@@ -216,7 +234,6 @@ def trainer(config):
                 writer.add_scalar("charts/SPS", SPS, global_step)
                 writer.add_scalar("charts/RestTime", RT/60, global_step)
                 writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
-
 
             # Checkpoints
             if update % save_freq == 0:

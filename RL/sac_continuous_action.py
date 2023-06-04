@@ -1,35 +1,31 @@
-"""
-DDPG (Deep Deterministic Policy Gradient) for continuous action space, with some tricks:
-    1. Target policy network to compute to an action which approximately maximizes Q(s,a)
-    2. Polyak averaging of the target network.
-    3. Time-correlated OU noise for exploration.
-    4. Delayed update of the policy network (not in the original DDPG).
-"""
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
+import argparse
 import os
 import random
 import time
-import gymnasium as gym
+import gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.distributions import Normal
 import stable_baselines3 as sb3
 from stable_baselines3.common.buffers import ReplayBuffer
 from RL.utils import set_run_name, set_track
 from env.dm2gym import make_vectorized_envs
 
-def head(in_features, hidden_dims, init_func=lambda x:x, **kwargs):
+def head(in_features, hidden_dims):
     """Create a head template for actor and critic (aka. Agent network)"""
     layers = [] # 下面in_features如果是numpy.int64类型，会报错，所以要转换成int类型
     in_features = int(in_features) if isinstance(in_features, np.integer) else in_features
     for in_dim, out_dim in zip((in_features,)+hidden_dims, hidden_dims):  
-        layers.append(init_func(nn.Linear(in_dim, out_dim), **kwargs))
+        layers.append(nn.Linear(in_dim, out_dim))
         layers.append(nn.ReLU())
     return nn.Sequential(*layers)
 
-# ALGO LOGIC: initialize agent here:
-class QNetwork(nn.Module):
+
+class SoftQNetwork(nn.Module):
     def __init__(self, envs, hidden_dims=(256, 256)):
         super().__init__()
         hidden_dims = (hidden_dims,) if isinstance(hidden_dims, int) else hidden_dims
@@ -38,8 +34,13 @@ class QNetwork(nn.Module):
                             head(input_dim, hidden_dims),
                             nn.Linear(hidden_dims[-1], 1),
                             )
-    def forward(self, x, a):
+    def forward(self, x, a): # Q network
         return self.Q(torch.cat([x, a], -1))
+
+
+LOG_STD_MAX = 2
+LOG_STD_MIN = -5
+
 
 class Actor(nn.Module):
     def __init__(self, envs, hidden_dims=(256, 256)):
@@ -47,11 +48,9 @@ class Actor(nn.Module):
         hidden_dims = (hidden_dims,) if isinstance(hidden_dims, int) else hidden_dims
         input_dim = np.array(envs.single_observation_space.shape).prod()
         output_dim = np.array(envs.single_action_space.shape).prod()
-        self.actor = nn.Sequential(
-                                head(input_dim, hidden_dims),
-                                nn.Linear(hidden_dims[-1], output_dim),
-                                nn.Tanh(),
-                                )
+        self.head = head(input_dim, hidden_dims)
+        self.mean = nn.Linear(hidden_dims[-1], output_dim)
+        self.logstd = nn.Linear(hidden_dims[-1], output_dim)
         # action rescaling
         action_low = torch.tensor(envs.single_action_space.low).view(1, -1).float()
         action_high = torch.tensor(envs.single_action_space.high).view(1, -1).float()
@@ -60,8 +59,27 @@ class Actor(nn.Module):
         self.register_buffer("action_scale", (action_high - action_low) / 2.0)
         self.register_buffer("action_bias", (action_high + action_low) / 2.0)
 
-    def forward(self, x):
-        return self.actor(x) * self.action_scale + self.action_bias
+    def forward(self, x): #  value network
+        x = self.head(x)
+        mean = self.fc_mean(x)
+        log_std = self.fc_logstd(x)
+        log_std = torch.tanh(log_std)
+        log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
+        return mean, log_std
+
+    def get_action(self, x): # policy network
+        mean, log_std = self(x)
+        std = log_std.exp()
+        normal = Normal(mean, std)
+        x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
+        y_t = torch.tanh(x_t)
+        action = y_t * self.action_scale + self.action_bias
+        log_prob = normal.log_prob(x_t)
+        # Enforcing Action Bound
+        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
+        log_prob = log_prob.sum(1, keepdim=True)
+        mean = torch.tanh(mean) * self.action_scale + self.action_bias
+        return action, log_prob, mean
 
 
 def trainer(config):
@@ -90,7 +108,8 @@ def trainer(config):
     asynchronous = config.algo.asynchronous
     hidden_dims = config.algo.hidden_dims
     total_timesteps = config.algo.total_timesteps
-    learning_rate = config.algo.learning_rate
+    q_lr = config.algo.q_lr
+    policy_lr = config.algo.policy_lr
     buffer_size = config.algo.buffer_size
     batch_size = config.algo.batch_size
     gamma = config.algo.gamma
@@ -99,6 +118,8 @@ def trainer(config):
     learning_starts = config.algo.learning_starts
     policy_delay = config.algo.policy_delay
     noise_clip = config.algo.noise_clip
+    alpha = config.algo.alpha
+    autotune = config.algo.autotune
     save_freq = config.algo.save_freq
 
 
@@ -122,13 +143,22 @@ def trainer(config):
 
     ########## 4. AGENT ##########
     actor = Actor(envs, hidden_dims).to(device)
-    Qnet = QNetwork(envs, hidden_dims).to(device)
-    actor_target = Actor(envs, hidden_dims).to(device)
-    Qnet_target = QNetwork(envs, hidden_dims).to(device)
-    actor_target.load_state_dict(actor.state_dict())
-    Qnet_target.load_state_dict(Qnet.state_dict())
-    Qnet_optimizer = optim.Adam(list(Qnet.parameters()), lr=learning_rate)
-    actor_optimizer = optim.Adam(list(actor.parameters()), lr=learning_rate)
+    Qnet1 = SoftQNetwork(envs, hidden_dims).to(device)
+    Qnet2 = SoftQNetwork(envs, hidden_dims).to(device)
+    Qnet1_target = SoftQNetwork(envs, hidden_dims).to(device)
+    Qnet2_target = SoftQNetwork(envs, hidden_dims).to(device)
+    Qnet1_target.load_state_dict(Qnet1.state_dict())
+    Qnet2_target.load_state_dict(Qnet2.state_dict())
+    Qnet_optimizer = optim.Adam(list(Qnet1.parameters()) + list(Qnet2.parameters()), lr=q_lr)
+    actor_optimizer = optim.Adam(list(actor.parameters()), lr=policy_lr)
+
+    if autotune:
+        target_entropy = -torch.prod(torch.Tensor(envs.single_action_space.shape).to(device)).item()
+        log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        alpha = log_alpha.exp().item()
+        alpha_optimizer = optim.Adam([log_alpha], lr=q_lr)
+    else:
+        alpha = alpha
 
     ########## 5. REPLAYBUFFER #########
     envs.single_observation_space.dtype = np.float32
@@ -137,7 +167,7 @@ def trainer(config):
         envs.single_observation_space,
         envs.single_action_space,
         device,
-        handle_timeout_termination=False,
+        handle_timeout_termination=True,
     )
 
     ########## 6. TRAINING #########
@@ -147,16 +177,13 @@ def trainer(config):
     print(f"Start DDPG...总更新次数为{num_updates}")
     obs, _ = envs.reset(seed=seed)
     for update in range(1, num_updates + 1):
-        
+
         # STEP 1: get actions. If in the initial stage, take random actions, otherwise from the actor
         if global_step < learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            with torch.no_grad():
-                # TODO: decrease the exploration noise during training
-                actions = actor(torch.Tensor(obs).to(device))
-                actions += torch.normal(0, actor.action_scale * exploration_noise)
-                actions = torch.clamp(actions, actor.low, actor.high).cpu().numpy()
+            actions, _, _ = actor.get_action(torch.Tensor(obs).to(device))
+            actions = actions.detach().cpu().numpy()
         global_step += num_envs * update
 
         # STEP 2: execute actions in envs
@@ -180,35 +207,61 @@ def trainer(config):
         if global_step > learning_starts:
             data = rb.sample(batch_size)
 
-            # Update Q-Network, minimize the TD-error, delta_Q = Q(s,a) - (r + gamma * Q(s',a'))
+            # Update two Q-networks, choose a smaller as the Q_true
             with torch.no_grad():
-                next_state_actions = actor_target(data.next_observations)
-                Qnet_next_target = Qnet_target(data.next_observations, next_state_actions)
-                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (Qnet_next_target).view(-1)
+                next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
+                Qnet1_next_target = Qnet1_target(data.next_observations, next_state_actions)
+                Qnet2_next_target = Qnet2_target(data.next_observations, next_state_actions)
+                min_Qnet_next_target = torch.min(Qnet1_next_target, Qnet2_next_target) - alpha * next_state_log_pi
+                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (min_Qnet_next_target).view(-1)
 
-            Qnet_a_values = Qnet(data.observations, data.actions).view(-1)
-            Qnet_loss = F.mse_loss(Qnet_a_values, next_q_value)
+            Qnet1_a_values = Qnet1(data.observations, data.actions).view(-1)
+            Qnet2_a_values = Qnet2(data.observations, data.actions).view(-1)
+            Qnet1_loss = F.mse_loss(Qnet1_a_values, next_q_value)
+            Qnet2_loss = F.mse_loss(Qnet2_a_values, next_q_value)
+            Qnet_loss = Qnet1_loss + Qnet2_loss
+
             Qnet_optimizer.zero_grad()
             Qnet_loss.backward()
             Qnet_optimizer.step()
 
-            # Update Policy network, maximize Q(s,a)
-            if update % policy_delay == 0: # DDPG 原始算法不会延迟更新actor
-                actor_loss = -Qnet(data.observations, actor(data.observations)).mean()
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
+            if update % policy_delay == 0:  # Delayed update support
+                for _ in range(policy_delay):
+                    # compensate for the delay by doing 'actor_update_interval' instead of 1
+                    pi, log_pi, _ = actor.get_action(data.observations)
+                    Qnet1_pi = Qnet1(data.observations, pi)
+                    Qnet2_pi = Qnet2(data.observations, pi)
+                    min_Qnet_pi = torch.min(Qnet1_pi, Qnet2_pi).view(-1)
+                    actor_loss = ((alpha * log_pi) - min_Qnet_pi).mean()
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
-                # update the target network
-                for param, target_param in zip(actor.parameters(), actor_target.parameters()):
+                    if autotune:
+                        with torch.no_grad():
+                            _, log_pi, _ = actor.get_action(data.observations)
+                        alpha_loss = (-log_alpha * (log_pi + target_entropy)).mean()
+
+                        alpha_optimizer.zero_grad()
+                        alpha_loss.backward()
+                        alpha_optimizer.step()
+                        alpha = log_alpha.exp().item()
+
+            # update the target networks
+            if update % policy_delay == 0:
+                for param, target_param in zip(Qnet1.parameters(), Qnet1_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-                for param, target_param in zip(Qnet.parameters(), Qnet_target.parameters()):
+                for param, target_param in zip(Qnet2.parameters(), Qnet2_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-            if update % 8 == 0: # every 2048 samples
-                writer.add_scalar("losses/Qnet_loss", Qnet_loss.item(), global_step)
+            if update % 8 == 0:
+                writer.add_scalar("losses/Qnet1_values", Qnet1_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/Qnet2_values", Qnet2_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/Qnet1_loss", Qnet1_loss.item(), global_step)
+                writer.add_scalar("losses/Qnet2_loss", Qnet2_loss.item(), global_step)
+                writer.add_scalar("losses/Qnet_loss", Qnet_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/Qnet_values", Qnet_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/alpha", alpha, global_step)
                 SPS = int(global_step / (time.time() - start_time))
                 TPU = float((time.time() - start_time) / global_step / 60)
                 RT  = float((num_updates - update) * TPU)
@@ -216,7 +269,8 @@ def trainer(config):
                 writer.add_scalar("charts/SPS", SPS, global_step)
                 writer.add_scalar("charts/RestTime", RT/60, global_step)
                 writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
-
+                if autotune:
+                    writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
             # Checkpoints
             if update % save_freq == 0:

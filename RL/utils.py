@@ -1,4 +1,5 @@
-"""Until functions for RL algorithms."""
+"""Utility for RL algorithms."""
+from distutils.util import strtobool
 from torch.utils.tensorboard import SummaryWriter
 import wandb
 # pylint: disable=too-many-arguments
