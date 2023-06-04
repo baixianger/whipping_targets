@@ -311,7 +311,7 @@ def trainer(config):
     else:
         device = torch.device("cpu")
     env_id = config.task.env_id
-    env_args = config.task.env_args
+    env_args = config.task
     num_envs = config.algo.num_envs
     asynchronous = config.algo.asynchronous
     total_timesteps =  config.algo.total_timesteps

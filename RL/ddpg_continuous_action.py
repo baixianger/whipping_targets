@@ -28,7 +28,7 @@ def head(in_features, hidden_dims, init_func=lambda x:x, **kwargs):
         layers.append(nn.ReLU())
     return nn.Sequential(*layers)
 
-# ALGO LOGIC: initialize agent here:
+
 class QNetwork(nn.Module):
     def __init__(self, envs, hidden_dims=(256, 256)):
         super().__init__()
@@ -40,6 +40,7 @@ class QNetwork(nn.Module):
                             )
     def forward(self, x, a):
         return self.Q(torch.cat([x, a], -1))
+
 
 class Actor(nn.Module):
     def __init__(self, envs, hidden_dims=(256, 256)):
@@ -85,22 +86,21 @@ def trainer(config):
     else:
         device = torch.device("cpu")
     env_id = config.task.env_id
-    env_args = config.task.env_args
-    num_envs = config.algo.num_envs
+    env_args = config.task
+    num_envs = int(config.algo.num_envs)
     asynchronous = config.algo.asynchronous
     hidden_dims = config.algo.hidden_dims
-    total_timesteps = config.algo.total_timesteps
+    total_timesteps = int(config.algo.total_timesteps)
     learning_rate = config.algo.learning_rate
-    buffer_size = config.algo.buffer_size
-    batch_size = config.algo.batch_size
+    buffer_size = int(config.algo.buffer_size)
+    batch_size = int(config.algo.batch_size)
     gamma = config.algo.gamma
     tau = config.algo.tau
     exploration_noise = config.algo.exploration_noise
-    learning_starts = config.algo.learning_starts
-    policy_delay = config.algo.policy_delay
+    learning_starts = int(config.algo.learning_starts)
+    policy_delay = int(config.algo.policy_delay)
     noise_clip = config.algo.noise_clip
-    save_freq = config.algo.save_freq
-
+    save_freq = int(config.algo.save_freq)
 
     ########## 1. SEED #########
     if seed is not None:
@@ -137,6 +137,7 @@ def trainer(config):
         envs.single_observation_space,
         envs.single_action_space,
         device,
+        num_envs,
         handle_timeout_termination=False,
     )
 
@@ -151,6 +152,7 @@ def trainer(config):
         # STEP 1: get actions. If in the initial stage, take random actions, otherwise from the actor
         if global_step < learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            print(f"ReplayBuffer Warmup [{global_step:<5d}/{learning_starts:d}]", end="\r")
         else:
             with torch.no_grad():
                 # TODO: decrease the exploration noise during training
@@ -163,7 +165,8 @@ def trainer(config):
         next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
         if "final_info" in infos:
             for info in infos["final_info"]:
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                episodic_return = info["episode"]["r"][0]
+                # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
                 break
@@ -212,7 +215,7 @@ def trainer(config):
                 SPS = int(global_step / (time.time() - start_time))
                 TPU = float((time.time() - start_time) / global_step / 60)
                 RT  = float((num_updates - update) * TPU)
-                print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT/60:.2f}h", end="\r")
+                print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT/60:.2f}h, return={episodic_return:.2f}", end="\r")
                 writer.add_scalar("charts/SPS", SPS, global_step)
                 writer.add_scalar("charts/RestTime", RT/60, global_step)
                 writer.add_scalar("charts/TimePerUpdate", TPU, global_step)

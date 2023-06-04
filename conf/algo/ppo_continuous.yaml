@@ -1,3 +1,4 @@
+name: ppo_continuous
 total_timesteps: 2000000 # 1000000
 num_envs: 256 # 256
 asynchronous: True

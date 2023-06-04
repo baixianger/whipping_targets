@@ -85,7 +85,7 @@ def trainer(config):
     else:
         device = torch.device("cpu")
     env_id = config.task.env_id
-    env_args = config.task.env_args
+    env_args = config.task
     num_envs = config.algo.num_envs
     asynchronous = config.algo.asynchronous
     hidden_dims = config.algo.hidden_dims
@@ -206,7 +206,7 @@ def trainer(config):
             Qnet_loss.backward()
             Qnet_optimizer.step()
 
-            if global_step % policy_delay == 0:
+            if update % policy_delay == 0:
                 actor_loss = -Qnet1(data.observations, actor(data.observations)).mean()
                 actor_optimizer.zero_grad()
                 actor_loss.backward()

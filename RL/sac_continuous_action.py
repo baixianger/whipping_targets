@@ -103,7 +103,7 @@ def trainer(config):
     else:
         device = torch.device("cpu")
     env_id = config.task.env_id
-    env_args = config.task.env_args
+    env_args = config.task
     num_envs = config.algo.num_envs
     asynchronous = config.algo.asynchronous
     hidden_dims = config.algo.hidden_dims
@@ -174,7 +174,7 @@ def trainer(config):
     start_time = time.time()
     global_step = 0
     num_updates = total_timesteps // num_envs
-    print(f"Start DDPG...总更新次数为{num_updates}")
+    print(f"Start SAC...总更新次数为{num_updates}")
     obs, _ = envs.reset(seed=seed)
     for update in range(1, num_updates + 1):
 
