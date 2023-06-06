@@ -7,7 +7,6 @@
     <default class="panda">
       <material specular="0.5" shininess="0.25"/>
       <joint armature="0.1" damping="1" axis="0 0 1" range="-2.8973 2.8973"/>
-      <general dyntype="none" biastype="affine" ctrlrange="-2.8973 2.8973" forcerange="-87 87"/>
       <default class="finger">
         <joint axis="0 1 0" type="slide" range="0 0.04"/>
       </default>
@@ -380,17 +379,13 @@
 
   <actuator>
     <!-- 作用在joint上的forcerange指的是力矩 -->
-    <general class="panda" name="actuator1" joint="joint1" gainprm="4500" biasprm="0 -4500 -450"/>
-    <general class="panda" name="actuator2" joint="joint2" gainprm="4500" biasprm="0 -4500 -450" ctrlrange="-1.7628 1.7628"/>
-    <general class="panda" name="actuator3" joint="joint3" gainprm="3500" biasprm="0 -3500 -350"/>
-    <general class="panda" name="actuator4" joint="joint4" gainprm="3500" biasprm="0 -3500 -350" ctrlrange="-3.0718 -0.0698"/>
-    <general class="panda" name="actuator5" joint="joint5" gainprm="2000" biasprm="0 -2000 -200" forcerange="-12 12"/>
-    <general class="panda" name="actuator6" joint="joint6" gainprm="2000" biasprm="0 -2000 -200" forcerange="-12 12" ctrlrange="-0.0175 3.7525"/>
-    <general class="panda" name="actuator7" joint="joint7" gainprm="2000" biasprm="0 -2000 -200" forcerange="-12 12"/>
+    <motor name="actuator1" joint="joint1" class="panda" forcerange="-87 87" ctrlrange="-87 87"/> 
+    <motor name="actuator2" joint="joint2" class="panda" forcerange="-87 87" ctrlrange="-87 87"/> 
+    <motor name="actuator3" joint="joint3" class="panda" forcerange="-87 87" ctrlrange="-87 87"/> 
+    <motor name="actuator4" joint="joint4" class="panda" forcerange="-87 87" ctrlrange="-87 87"/> 
+    <motor name="actuator5" joint="joint5" class="panda" forcerange="-12 12" ctrlrange="-12 12"/> 
+    <motor name="actuator6" joint="joint6" class="panda" forcerange="-12 12" ctrlrange="-12 12"/> 
+    <motor name="actuator7" joint="joint7" class="panda" forcerange="-12 12" ctrlrange="-12 12"/>
   </actuator>
 
-  <keyframe>
-    <key name="home" qpos="0 0 0 -1.57079 0 1.57079 -0.7853 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
-        ctrl="0 0 0 -1.57079 0 1.57079 -0.7853"/>
-  </keyframe>
 </mujoco>

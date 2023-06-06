@@ -48,9 +48,15 @@ class TaskRunningStats: # pylint: disable=too-many-instance-attributes
 class Scene(composer.Entity):
     """A 7-DOF Panda arm."""
 
-    def _build(self, *args, **kwargs):
+    def _build(self, ctrl_type, *args, **kwargs):
         """Initializes the arm."""
-        self._model = mjcf.from_path('env/xml/scene.xml')
+        if ctrl_type== 'torque':
+            xml_path = 'env/xml/scene_torque.xml'
+        elif ctrl_type == 'position':
+            xml_path = 'env/xml/scene_position.xml'
+        else:
+            raise ValueError('ctrl_type must be torque or position')
+        self._model = mjcf.from_path(xml_path)
         self._joints = self._model.find_all('joint')
         self._arm_joints = [self._model.find_all('joint')[i] for i in [0,1,2,3,4,5,6]]
         self._actuators = self._model.find_all('actuator')
@@ -73,8 +79,11 @@ class Scene(composer.Entity):
 class SingleStepTaskSimple(composer.Task):
     """basic task for whipping expriments"""
     def __init__(self, **kwargs):  # pylint: disable=too-many-arguments
-        self.stats = TaskRunningStats()
-        self.scene = Scene()
+        if kwargs.get('target', False):
+            self.random_pos = RandomPos() 
+        if kwargs.get('arm_qpos', False):
+            self.arm_qpos = _RESET_QPOS[kwargs.get('arm_qpos')]
+        self.scene = Scene(kwargs.get('ctrl_type', 'position'))
         self.joints = self.scene._joints
         self.arm_joints = self.scene._arm_joints
         self.whip_start = self.scene._whip_start
@@ -85,6 +94,7 @@ class SingleStepTaskSimple(composer.Task):
         self.actuators = self.scene._actuators
         self.sensors = self.scene._sensors
         
+        self.stats = TaskRunningStats()
         self.num_substeps = 250
         self.max_steps = 1
         self.time_limit = 0.5
@@ -111,9 +121,6 @@ class SingleStepTaskSimple(composer.Task):
         for obs in self._task_observables.values():
             obs.enabled = True
 
-        if kwargs.get('target', False):
-            self.random_pos = RandomPos()
-
     @property
     def root_entity(self):
         return self.scene
@@ -129,8 +136,9 @@ class SingleStepTaskSimple(composer.Task):
             self.target.pos = pos
 
     def initialize_episode(self, physics, random_state):
-        assert physics.model.nq == len(_RESET_QPOS)
-        physics.bind(self.joints).qpos = _RESET_QPOS
+        if hasattr(self, 'arm_qpos'):
+            assert physics.model.nq == len(self.arm_qpos)
+            physics.bind(self.joints).qpos = self.arm_qpos
 
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
@@ -173,3 +181,120 @@ class SingleStepTaskSimple(composer.Task):
         self.target.geom[0].rgba = (0.96, 0.38, 0.08, 0.9)
 
 
+class MultiStepTaskSimple(composer.Task):
+    """basic task for whipping expriments"""
+    def __init__(self, **kwargs):  # pylint: disable=too-many-arguments
+        if kwargs.get('target', False):
+            self.random_pos = RandomPos() 
+        if kwargs.get('arm_qpos', False):
+            self.arm_qpos = _RESET_QPOS[kwargs.get('arm_qpos')]
+        self.scene = Scene(kwargs.get('ctrl_type', 'torque'))
+        self.joints = self.scene._joints
+        self.arm_joints = self.scene._arm_joints
+        self.whip_start = self.scene._whip_start
+        self.whip_end = self.scene._whip_end
+        self.whip_bodies = self.scene._whip_bodies
+        self.target = self.scene._target
+        self.target_site = self.scene._target_site
+        self.actuators = self.scene._actuators
+        self.sensors = self.scene._sensors
+        
+        self.stats = TaskRunningStats()
+        self.num_substeps = 10
+        self.max_steps = 50
+        self.time_limit = 1
+        self.set_timesteps(0.02, 0.002)
+
+        self._task_observables = {}
+        self._task_observables['target'] = observable.MJCFFeature('xpos', self.target)
+        self._task_observables['whip_start'] = observable.MJCFFeature('xpos', self.whip_start)
+        self._task_observables['whip_end'] = observable.MJCFFeature('xpos', self.whip_end)
+        self._task_observables['whip_bodies'] = observable.MJCFFeature('xpos', self.whip_bodies)
+        self._task_observables['arm_qpos'] = observable.MJCFFeature('qpos', self.arm_joints)
+        self._task_observables['arm_qvel'] = observable.MJCFFeature('qvel', self.arm_joints)
+        self._task_observables['target_vel'] = observable.MJCFFeature('sensordata', self.sensors[0])
+        self._task_observables['whip_start_vel'] = observable.MJCFFeature('sensordata', self.sensors[1])
+        self._task_observables['whip_end_vel'] = observable.MJCFFeature('sensordata', self.sensors[2])
+        self._task_observables['time'] = observable.Generic(lambda x: x.time())
+
+        for obs in self._task_observables.values():
+            obs.enabled = True
+
+    @property
+    def root_entity(self):
+        return self.scene
+
+    @property
+    def task_observables(self):
+        return self._task_observables
+
+    def initialize_episode_mjcf(self, random_state):
+        self.stats.reset()
+        if hasattr(self, 'random_pos'):
+            pos = self.random_pos()
+            self.target.pos = pos
+
+    def initialize_episode(self, physics, random_state):
+        if hasattr(self, 'arm_qpos'):
+            assert physics.model.nq == len(self.arm_qpos)
+            physics.bind(self.joints).qpos = self.arm_qpos
+
+        target_xpos = physics.bind(self.target).xpos
+        whip_start_xpos = physics.bind(self.whip_start).xpos
+        whip_end_xpos = physics.bind(self.whip_end).xpos
+        speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
+                @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
+        self.stats.old_w2t = np.linalg.norm(target_xpos - whip_end_xpos)
+        self.stats.old_a2t = np.linalg.norm(target_xpos - whip_start_xpos)
+        self.stats.old_speed = speed
+
+    def before_step(self, physics, action, random_state):
+        physics.set_control(action)
+
+    def after_substep(self, physics, random_state):
+        if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
+            self.stats.is_hitted = True
+            self.after_hit(physics)
+
+    def after_step(self, physics, random_state):
+        target_xpos = physics.bind(self.target).xpos
+        whip_start_xpos = physics.bind(self.whip_start).xpos
+        whip_end_xpos = physics.bind(self.whip_end).xpos
+        speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
+                @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
+        self.stats.w2t = np.linalg.norm(target_xpos - whip_end_xpos)
+        self.stats.a2t = np.linalg.norm(target_xpos - whip_start_xpos)
+        self.stats.speed = speed
+
+    def should_terminate_episode(self, physics):
+        return physics.time() > self.time_limit or self.stats.is_hitted
+
+    def get_reward(self, physics):
+        if self.stats.is_hitted:
+            return 100
+        w2t_reward = self.stats.old_w2t - self.stats.w2t
+        a2t_reward = self.stats.old_a2t - self.stats.a2t
+        speed_reward = self.stats.speed - self.stats.old_speed
+        self.stats.old_w2t = self.stats.w2t
+        self.stats.old_a2t = self.stats.a2t
+        self.stats.old_speed = self.stats.speed
+        return 10 * w2t_reward + speed_reward
+    
+    def show_observables(self):
+        """Show the observables."""
+        for key, value in self.observables.items():
+            print(f'{key:<30}', value)
+
+    def after_hit(self, physics):
+        """Change the color and size of the target."""
+        self.target.geom[0].rgba = (0.96, 0.38, 0.08, 0.9)
+
+    def _whip_start_to_target(self, physics):
+        """Calculate the distance between arm and target."""
+        return np.linalg.norm(
+            physics.bind(self.target).xpos - physics.bind(self.whip_start).xpos)
+
+    def _whip_end_to_target(self, physics):
+        """Calculate the distance between whip end and target."""
+        return np.linalg.norm(
+            physics.bind(self.target).xpos - physics.bind(self.whip_end).xpos)

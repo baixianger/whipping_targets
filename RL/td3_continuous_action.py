@@ -19,12 +19,12 @@ from stable_baselines3.common.buffers import ReplayBuffer
 from RL.utils import set_run_name, set_track
 from env.dm2gym import make_vectorized_envs
 
-def head(in_features, hidden_dims, init_func=lambda x:x, **kwargs):
+def head(in_features, hidden_dims):
     """Create a head template for actor and critic (aka. Agent network)"""
     layers = [] # 下面in_features如果是numpy.int64类型，会报错，所以要转换成int类型
     in_features = int(in_features) if isinstance(in_features, np.integer) else in_features
     for in_dim, out_dim in zip((in_features,)+hidden_dims, hidden_dims):  
-        layers.append(init_func(nn.Linear(in_dim, out_dim), **kwargs))
+        layers.append(nn.Linear(in_dim, out_dim))
         layers.append(nn.ReLU())
     return nn.Sequential(*layers)
 
@@ -76,6 +76,7 @@ def trainer(config):
     track = config.track
     wandb_project_name = config.wandb_project_name
     wandb_entity = config.wandb_entity
+    wandb_group = config.algo.name
     seed = config.seed
     torch_deterministic = config.torch_deterministic
     if config.cuda:
@@ -86,21 +87,23 @@ def trainer(config):
         device = torch.device("cpu")
     env_id = config.task.env_id
     env_args = config.task
-    num_envs = config.algo.num_envs
+    num_envs = int(config.algo.num_envs)
     asynchronous = config.algo.asynchronous
     hidden_dims = config.algo.hidden_dims
-    total_timesteps = config.algo.total_timesteps
+    num_updates = int(config.algo.num_updates)
+    total_timesteps = int(config.algo.total_timesteps)
     learning_rate = config.algo.learning_rate
-    buffer_size = config.algo.buffer_size
-    batch_size = config.algo.batch_size
+    buffer_size = int(config.algo.buffer_size)
+    batch_size = int(config.algo.batch_size)
     gamma = config.algo.gamma
     tau = config.algo.tau
     policy_noise = config.algo.policy_noise
+    anneal_noise = config.algo.anneal_noise
     exploration_noise = config.algo.exploration_noise
-    learning_starts = config.algo.learning_starts
-    policy_delay = config.algo.policy_delay
+    learning_starts = int(config.algo.learning_starts)
+    policy_delay = int(config.algo.policy_delay)
     noise_clip = config.algo.noise_clip
-    save_freq = config.algo.save_freq
+    save_freq = int(config.algo.save_freq)
 
 
     ########## 1. SEED #########
@@ -112,7 +115,7 @@ def trainer(config):
 
     ########## 2. LOGGER ##########
     run_name = set_run_name(env_id, exp_name, seed, int(time.time()))
-    writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
+    writer = set_track(wandb_project_name, wandb_entity, wandb_group, run_name, config, track)
 
     ########## 3. ENVIRONMENT #########
     envs = make_vectorized_envs(num_envs=num_envs,
@@ -141,24 +144,32 @@ def trainer(config):
         envs.single_observation_space,
         envs.single_action_space,
         device,
-        handle_timeout_termination=True,
+        num_envs,
+        handle_timeout_termination=False,
     )
 
     ########## 6. TRAINING #########
     start_time = time.time()
     global_step = 0
-    num_updates = total_timesteps // num_envs
+    num_updates = num_updates if num_updates else total_timesteps // num_envs
     print(f"Start TD3...总更新次数为{num_updates}")
-    obs, _ = envs.reset(seed=seed)
+    obs, _ = envs.reset()
     for update in range(1, num_updates + 1):
         
         # STEP 1: get actions. If in the initial stage, take random actions, otherwise from the actor
         if global_step < learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            print(f"ReplayBuffer Warmup [{global_step:<5d}/{learning_starts:d}]", end="\r")
         else:
             with torch.no_grad():
+                # TODO: decrease the exploration noise during training
+                if anneal_noise:
+                    frac = 1.0 - update / num_updates
+                    sampling_noise = frac * exploration_noise
+                else:
+                    sampling_noise = exploration_noise
                 actions = actor(torch.Tensor(obs).to(device))
-                actions += torch.normal(0, actor.action_scale * exploration_noise)
+                actions += torch.normal(0, actor.action_scale * sampling_noise)
                 actions = torch.clamp(actions, actor.low, actor.high).cpu().numpy()
         global_step += num_envs * update
 
@@ -166,14 +177,17 @@ def trainer(config):
         next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
         if "final_info" in infos:
             for info in infos["final_info"]:
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                episodic_return = info["episode"]["r"][0]
+                # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
                 break
 
         # STEP 3: add data to replay buffer
+        #         向量化环境后, 会自动重设, 所以当一个回合结束后返回的状态是对应环境重设后的初始状态
+        #         环境真正的最后一个状态保存在infos["final_observation"]中
         real_next_obs = next_obs.copy()
-        for idx, d in enumerate(truncateds):
+        for idx, d in enumerate(terminateds):
             if d: # In our case, we never truncate the episode
                 real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminateds, infos)
@@ -192,15 +206,15 @@ def trainer(config):
                 next_state_actions = (actor_target(data.next_observations) + clipped_noise).clamp(
                     actor_target.low, actor_target.high
                 )
-                Qnet1_next_target = Qnet1_target(data.next_observations, next_state_actions)
-                Qnet2_next_target = Qnet2_target(data.next_observations, next_state_actions)
-                min_Qnet_next_target = torch.min(Qnet1_next_target, Qnet2_next_target)
-                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (min_Qnet_next_target).view(-1)
+                Q_value_1_next = Qnet1_target(data.next_observations, next_state_actions)
+                Q_value_2_next = Qnet2_target(data.next_observations, next_state_actions)
+                min_Q_value_next = torch.min(Q_value_1_next, Q_value_2_next)
+                Q_value_true = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (min_Q_value_next).view(-1)
 
-            Qnet1_a_values = Qnet1(data.observations, data.actions).view(-1)
-            Qnet2_a_values = Qnet2(data.observations, data.actions).view(-1)
-            Qnet1_loss = F.mse_loss(Qnet1_a_values, next_q_value)
-            Qnet2_loss = F.mse_loss(Qnet2_a_values, next_q_value)
+            Q_value_1_pred = Qnet1(data.observations, data.actions).view(-1)
+            Q_value_2_pred = Qnet2(data.observations, data.actions).view(-1)
+            Qnet1_loss = F.mse_loss(Q_value_1_pred, Q_value_true)
+            Qnet2_loss = F.mse_loss(Q_value_2_pred, Q_value_true)
             Qnet_loss = Qnet1_loss + Qnet2_loss
             Qnet_optimizer.zero_grad()
             Qnet_loss.backward()
@@ -221,18 +235,18 @@ def trainer(config):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
             if update % 8 == 0: # every 2048 samples
-                writer.add_scalar("losses/Qnet1_values", Qnet1_a_values.mean().item(), global_step)
-                writer.add_scalar("losses/Qnet2_values", Qnet2_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/Qnet1_values", Q_value_1_pred.mean().item(), global_step)
+                writer.add_scalar("losses/Qnet2_values", Q_value_2_pred.mean().item(), global_step)
                 writer.add_scalar("losses/Qnet1_loss", Qnet1_loss.item(), global_step)
                 writer.add_scalar("losses/Qnet2_loss", Qnet2_loss.item(), global_step)
                 writer.add_scalar("losses/Qnet_loss", Qnet_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 SPS = int(global_step / (time.time() - start_time))
-                TPU = float((time.time() - start_time) / global_step / 60)
-                RT  = float((num_updates - update) * TPU)
-                print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT/60:.2f}h", end="\r")
+                TPU = float((time.time() - start_time) / update / 60)
+                RT  = float((num_updates - update) * TPU / 60)
+                print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT:.2f}h", end="\r")
                 writer.add_scalar("charts/SPS", SPS, global_step)
-                writer.add_scalar("charts/RestTime", RT/60, global_step)
+                writer.add_scalar("charts/RestTime", RT, global_step)
                 writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
 
             # Checkpoints

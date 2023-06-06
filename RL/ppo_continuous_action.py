@@ -254,6 +254,9 @@ class Buffer:
                 self.data["values"][step] = value      # (buffer_batch, 1)
                 self.data["actions"][step] = action    # (buffer_batch, action_dim)
                 self.data["logprobs"][step] = logprob  # (buffer_batch, 1)
+                # TODO: 添加对终止状态的处理
+                #       if terminate, next_obs = reset() not real next_obs
+                #       真正的next_obs在infos的info["final_observation"]中
                 next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
                 done = np.logical_or(terminated, truncated)
                 self.data["rewards"][step, :, 0] = torch.Tensor(reward).to(self.device) # (buffer_batch,)
@@ -302,6 +305,7 @@ def trainer(config):
     track = config.track
     wandb_project_name = config.wandb_project_name
     wandb_entity = config.wandb_entity
+    wandb_group = config.algo.name
     seed = config.seed
     torch_deterministic = config.torch_deterministic
     if config.cuda:
@@ -312,12 +316,13 @@ def trainer(config):
         device = torch.device("cpu")
     env_id = config.task.env_id
     env_args = config.task
-    num_envs = config.algo.num_envs
+    num_envs = int(config.algo.num_envs)
     asynchronous = config.algo.asynchronous
-    total_timesteps =  config.algo.total_timesteps
-    buffer_size = config.algo.buffer_size
-    update_epochs = config.algo.update_epochs
-    batch_size = config.algo.batch_size
+    num_updates = int(config.algo.num_updates)
+    total_timesteps =  int(config.algo.total_timesteps)
+    buffer_size = int(config.algo.buffer_size)
+    update_epochs = int(config.algo.update_epochs)
+    batch_size = int(config.algo.batch_size)
     learning_rate = config.algo.learning_rate
     anneal_lr = config.algo.anneal_lr
     gamma = config.algo.gamma
@@ -331,7 +336,7 @@ def trainer(config):
     vf_coef = config.algo.vf_coef
     max_grad_norm = config.algo.max_grad_norm
     target_kl = config.algo.target_kl
-    save_freq = config.algo.save_freq
+    save_freq = int(config.algo.save_freq)
 
 
 
@@ -344,7 +349,7 @@ def trainer(config):
 
     ########## 2. LOGGER ##########
     run_name = set_run_name(env_id, exp_name, seed, int(time.time()))
-    writer = set_track(wandb_project_name, wandb_entity, run_name, config, track)
+    writer = set_track(wandb_project_name, wandb_entity, wandb_group, run_name, config, track)
 
     ########## 3. ENVIRONMENT #########
     envs = make_vectorized_envs(num_envs=num_envs,
@@ -362,7 +367,7 @@ def trainer(config):
 
     ########## 6. TRAINING ##########
     start_time = time.time()
-    num_updates = total_timesteps // buffer_size
+    num_updates = num_updates if num_updates else total_timesteps // buffer_size
     print(f"Start PPO...总更新次数为{num_updates}")
     
     for update in range(1, num_updates + 1):
@@ -443,10 +448,10 @@ def trainer(config):
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         SPS = int(global_step / (time.time() - start_time))
         TPU = float((time.time() - start_time) / update / 60)
-        RT  = float((num_updates - update) * TPU)
-        print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT/60:.2f}h", end="\r")
+        RT  = float((num_updates - update) * TPU / 60)
+        print(f"Update={update}, SPS={SPS}, TPU={TPU:.2f}min, RT={RT:.2f}h", end="\r")
         writer.add_scalar("charts/SPS", SPS, global_step)
-        writer.add_scalar("charts/RestTime", RT/60, global_step)
+        writer.add_scalar("charts/RestTime", RT, global_step)
         writer.add_scalar("charts/TimePerUpdate", TPU, global_step)
 
 

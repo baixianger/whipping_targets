@@ -23,7 +23,8 @@ nvidia-smi
 # python3 train.py task.target=100 task.ctrl_type=torque
 # python3 train.py task=TwoStepTask task.target=100 
 # python3 train.py task=MultiStepTask
-python3 train.py task=SingleStepTaskSimple algo=ddpg_continuous
+# python3 train.py task=SingleStepTaskSimple algo=ddpg
+python3 train.py task=MultiStepTaskSimple algo=sac algo.num_updates=50000
 
 
 
