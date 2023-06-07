@@ -238,18 +238,20 @@ class MultiStepTaskSimple(composer.Task):
         if hasattr(self, 'arm_qpos'):
             assert physics.model.nq == len(self.arm_qpos)
             physics.bind(self.joints).qpos = self.arm_qpos
-
         target_xpos = physics.bind(self.target).xpos
         whip_start_xpos = physics.bind(self.whip_start).xpos
         whip_end_xpos = physics.bind(self.whip_end).xpos
         speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
                 @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
-        self.stats.old_w2t = np.linalg.norm(target_xpos - whip_end_xpos)
-        self.stats.old_a2t = np.linalg.norm(target_xpos - whip_start_xpos)
-        self.stats.old_speed = speed
+        self.stats.w2t = np.linalg.norm(target_xpos - whip_end_xpos)
+        self.stats.a2t = np.linalg.norm(target_xpos - whip_start_xpos)
+        self.stats.speed = speed
 
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
+        self.stats.old_w2t = self.stats.w2t
+        self.stats.old_a2t = self.stats.a2t
+        self.stats.old_speed = self.stats.speed
 
     def after_substep(self, physics, random_state):
         if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
@@ -271,14 +273,17 @@ class MultiStepTaskSimple(composer.Task):
 
     def get_reward(self, physics):
         if self.stats.is_hitted:
-            return 100
-        w2t_reward = self.stats.old_w2t - self.stats.w2t
-        a2t_reward = self.stats.old_a2t - self.stats.a2t
-        speed_reward = self.stats.speed - self.stats.old_speed
-        self.stats.old_w2t = self.stats.w2t
-        self.stats.old_a2t = self.stats.a2t
-        self.stats.old_speed = self.stats.speed
-        return 10 * w2t_reward + speed_reward
+            hit_reward = 10
+        else:
+            hit_reward = 0
+        # elif physics.time() > self.time_limit:
+        #     hit_reward = -10
+        # else:
+        #     hit_reward = 0
+        w2t_reward = self.stats.old_w2t > self.stats.w2t
+        a2t_reward = self.stats.old_a2t > self.stats.a2t
+        speed_reward = self.stats.speed > self.stats.old_speed
+        return w2t_reward + speed_reward + hit_reward
     
     def show_observables(self):
         """Show the observables."""

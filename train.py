@@ -19,7 +19,6 @@ def main(cfg: DictConfig):
         print('Algorithm not implemented yet.')
         return 0
 
-    cfg.exp_name = cfg.algo.name
     trainer(cfg)
 
 if __name__ == '__main__':

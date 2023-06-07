@@ -74,10 +74,12 @@ def trainer(config):
 
     ######### 0. CONFIG #########
     exp_name = config.exp_name
+    env_id = config.task.env_id
+    algo_name = config.algo.name
     track = config.track
     wandb_project_name = config.wandb_project_name
     wandb_entity = config.wandb_entity
-    wandb_group = config.algo.name
+    wandb_group = config.task.env_id
     seed = config.seed
     torch_deterministic = config.torch_deterministic
     if config.cuda:
@@ -86,7 +88,6 @@ def trainer(config):
         device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     else:
         device = torch.device("cpu")
-    env_id = config.task.env_id
     env_args = config.task
     num_envs = int(config.algo.num_envs)
     asynchronous = config.algo.asynchronous
@@ -114,7 +115,7 @@ def trainer(config):
         torch.backends.cudnn.deterministic = torch_deterministic
 
     ########## 2. LOGGER ##########
-    run_name = set_run_name(env_id, exp_name, seed, int(time.time()))
+    run_name = set_run_name(env_id, algo_name, exp_name, seed, int(time.time()))
     writer = set_track(wandb_project_name, wandb_entity, wandb_group, run_name, config, track)
 
     ########## 3. ENVIRONMENT #########

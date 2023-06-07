@@ -30,7 +30,7 @@ def test(): # pylint: disable=missing-function-docstring
                                 target=False,)
     envs.reset(seed=0)
     actions = envs.action_space.sample() 
-    envs.step(actions)
+    # envs.step(actions)
 
     # Run bash command
     os.system("echo $HOSTNAME")

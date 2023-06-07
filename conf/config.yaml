@@ -3,7 +3,7 @@ defaults:
   - algo: ppo_continuous
   - _self_
 
-exp_name: DDPG
+exp_name:
 track: True
 seed: 42
 torch_deterministic: True

@@ -24,7 +24,7 @@ nvidia-smi
 # python3 train.py task=TwoStepTask task.target=100 
 # python3 train.py task=MultiStepTask
 # python3 train.py task=SingleStepTaskSimple algo=ddpg
-python3 train.py task=MultiStepTaskSimple algo=sac algo.num_updates=50000
+python3 train.py exp_name=reward0 task=MultiStepTaskSimple algo=sac algo.num_updates=20000
 
 
 
