@@ -96,7 +96,7 @@ def trainer(config):
     track = config.track
     wandb_project_name = config.wandb_project_name
     wandb_entity = config.wandb_entity
-    wandb_group = config.task.env_id
+    wandb_group = config.wandb_group
     seed = config.seed
     torch_deterministic = config.torch_deterministic
     if config.cuda:

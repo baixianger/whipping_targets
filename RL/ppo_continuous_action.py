@@ -246,7 +246,6 @@ class Buffer:
         for step in range(0, self.buffer_steps): # batch = steps * envs
             # s_1, d_1 executes a_1 gets r_1, s_2, d_2, 
             # s_2, d_2 executes a_2 gets r_2, s_3, d_3
-            self.global_step += 1 * self.buffer_batch  # 总采样次数
             self.data["obs"][step] = self.next_obs     # (buffer_batch, obs_dim)
             self.data["dones"][step] = self.next_done  # (buffer_batch, 1)
             with torch.no_grad():
@@ -270,11 +269,9 @@ class Buffer:
                 # Skip the envs that are not done
                 if info is None:
                     continue
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], self.global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], self.global_step)
-        # obs = self.data["obs"][step][-1][-3:]
-        # episodic_return = self.data["rewards"].mean().item() * 2
-        # print(f"\tGlobal_step={self.global_step}, Episodic_return={episodic_return}, Obs={obs}")
+                writer.add_scalar("charts/episodic_return", info["episode"]["r"], self.global_step + i + 1)
+                writer.add_scalar("charts/episodic_length", info["episode"]["l"], self.global_step + i + 1)
+            self.global_step += 1 * self.buffer_batch  # 总采样次数
 
     def GAE(self, agent:Agent, gamma, gae_lambda):
         """Get Generalized Advantage Estimation and Flatten the data into a unified tensor."""
@@ -307,7 +304,7 @@ def trainer(config):
     track = config.track
     wandb_project_name = config.wandb_project_name
     wandb_entity = config.wandb_entity
-    wandb_group = config.task.env_id
+    wandb_group = config.wandb_group
     seed = config.seed
     torch_deterministic = config.torch_deterministic
     if config.cuda:

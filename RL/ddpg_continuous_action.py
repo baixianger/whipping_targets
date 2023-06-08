@@ -79,7 +79,7 @@ def trainer(config):
     track = config.track
     wandb_project_name = config.wandb_project_name
     wandb_entity = config.wandb_entity
-    wandb_group = config.task.env_id
+    wandb_group = config.wandb_group
     seed = config.seed
     torch_deterministic = config.torch_deterministic
     if config.cuda:
@@ -169,17 +169,17 @@ def trainer(config):
                 actions = actor(torch.Tensor(obs).to(device))
                 actions += torch.normal(0, actor.action_scale * sampling_noise)
                 actions = torch.clamp(actions, actor.low, actor.high).cpu().numpy()
-        global_step += num_envs * update
 
         # STEP 2: execute actions in envs
         next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
         if "final_info" in infos:
-            for info in infos["final_info"]:
-                episodic_return = info["episode"]["r"][0]
-                # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                break
+            for i, info in enumerate(infos["final_info"]):
+                if info is None:
+                    continue
+                # 多步环境中，每个episode结束都不会同步进行，所以要检查哪些结束了哪些没有
+                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step + i + 1)
+                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step + i + 1)
+        global_step += num_envs * update
 
         # STEP 3: add data to replay buffer
         #         向量化环境后, 会自动重设, 所以当一个回合结束后返回的状态是对应环境重设后的初始状态

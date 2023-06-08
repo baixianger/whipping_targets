@@ -5,9 +5,10 @@ defaults:
 
 exp_name:
 track: True
-seed: 42
+seed:
 torch_deterministic: True
 wandb_project_name: whipping
+wandb_group:
 wandb_entity: baixianger
 cuda: True # Nvida GPU
 mps: False # Apple M chip
