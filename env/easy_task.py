@@ -185,10 +185,13 @@ class MultiStepTaskSimple(composer.Task):
         self.sensors = self.scene._sensors
         
         self.stats = TaskRunningStats()
-        self.num_substeps = 10
+        # self.old_stats = TaskRunningStats()
+
         self.max_steps = 50
         self.time_limit = 1
-        self.set_timesteps(0.02, 0.002)
+        self.delta_time = 0.002
+        self.num_substeps = int(self.time_limit / self.delta_time)
+        self.set_timesteps(self.time_limit, self.delta_time)
 
         self._task_observables = {}
         self._task_observables['target'] = observable.MJCFFeature('xpos', self.target)
@@ -223,20 +226,21 @@ class MultiStepTaskSimple(composer.Task):
         if hasattr(self, 'arm_qpos'):
             assert physics.model.nq == len(self.arm_qpos)
             physics.bind(self.joints).qpos = self.arm_qpos
-        target_xpos = physics.bind(self.target).xpos
-        whip_start_xpos = physics.bind(self.whip_start).xpos
-        whip_end_xpos = physics.bind(self.whip_end).xpos
-        speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
-                @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
-        self.stats.old_w2t = np.linalg.norm(target_xpos - whip_end_xpos)
-        self.stats.old_a2t = np.linalg.norm(target_xpos - whip_start_xpos)
-        self.stats.old_speed = speed
+        # target_xpos = physics.bind(self.target).xpos
+        # whip_start_xpos = physics.bind(self.whip_start).xpos
+        # whip_end_xpos = physics.bind(self.whip_end).xpos
+        # speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
+        #         @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
+        # self.old_stats.old_a2t = np.linalg.norm(target_xpos - whip_start_xpos)
+        # self.old_stats.old_w2t = np.linalg.norm(target_xpos - whip_end_xpos)
+        # self.old_stats.old_speed = speed
+        # self.old_stats.is_hitted = False
 
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
 
     def after_substep(self, physics, random_state):
-        if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
+        if physics.named.data.sensordata['hit'] > 1 and not self.old_stats.is_hitted:
             self.stats.is_hitted = True
             self.after_hit(physics)
 
@@ -274,9 +278,9 @@ class MultiStepTaskSimple(composer.Task):
 
 
         # 更新奖励参数
-        self.stats.old_w2t = self.stats.w2t
-        self.stats.old_a2t = self.stats.a2t
-        self.stats.old_speed = self.stats.speed
+        self.old_stats.w2t = self.stats.w2t
+        self.old_stats.a2t = self.stats.a2t
+        self.old_stats.speed = self.stats.speed
         return reward
     
     def show_observables(self):

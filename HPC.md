@@ -57,6 +57,22 @@ ref: https://www.hpc.dtu.dk/?page_id=1519
 #BSUB -o RL_%J.out
 #BSUB -e RL_%J.err
 ```
+
+```
+#!/bin/sh
+#BSUB -J Whipping
+#BSUB -q hpc
+#BSUB -n 24
+#BSUB -W 05:00
+#BSUB -R "span[hosts=1]"
+#BSUB -R "rusage[mem=10GB]"
+#BSUB -R "select[model==XeonE5_2650v4]"
+#BSUB -u baixianger@gmail.com
+#BSUB -B
+#BSUB -N
+#BSUB -o RL_%J.out
+#BSUB -e RL_%J.err
+```
 ref: https://www.hpc.dtu.dk/?page_id=2520 [nodelist]
 ref: https://www.hpc.dtu.dk/?page_id=1416 [hpc batch job template]
 

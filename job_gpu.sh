@@ -5,7 +5,7 @@
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -W 05:00
 #BSUB -R "span[hosts=1]"
-#BSUB -R "rusage[mem=10GB]"
+#BSUB -R "rusage[mem=8GB]"
 #BSUB -u baixianger@gmail.com
 #BSUB -B
 #BSUB -N
