@@ -1,6 +1,6 @@
 # Tutorial for LSF
 
-```
+```bash
 # submit job
 bsub < job.sh
 # check job status
@@ -17,6 +17,12 @@ nodestat -F -g gpua40
 nodestat -F -g gpua10
 # check job start time
 showstart <job_id>
+```
+
+```bash
+cd ~ && du -h --max-depth=1 .
+# https://www.hpc.dtu.dk/?page_id=59
+# https://www.hpc.dtu.dk/?page_id=927#Scratch_usage
 ```
 
 ### template for batch jobs
@@ -58,7 +64,7 @@ ref: https://www.hpc.dtu.dk/?page_id=1519
 #BSUB -e RL_%J.err
 ```
 
-```
+```bash
 #!/bin/sh
 #BSUB -J Whipping
 #BSUB -q hpc

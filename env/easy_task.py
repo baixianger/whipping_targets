@@ -153,6 +153,8 @@ class SingleStepTaskSimple(composer.Task):
             return 1 - self.stats.w2t + 0.2 * self.stats.height + 0.2 * self.stats.speed
         if self.reward_type == 4:
             return (10**(1-self.stats.w2t) - 4)
+        if self.reward_type == 5:
+            return float(self.stats.is_hitted)
     
     def show_observables(self):
         """Show the observables."""
@@ -185,13 +187,14 @@ class MultiStepTaskSimple(composer.Task):
         self.sensors = self.scene._sensors
         
         self.stats = TaskRunningStats()
-        # self.old_stats = TaskRunningStats()
+        self.old_stats = TaskRunningStats()
 
         self.max_steps = 50
         self.time_limit = 1
+        self.ctrl_time = 0.02
         self.delta_time = 0.002
         self.num_substeps = int(self.time_limit / self.delta_time)
-        self.set_timesteps(self.time_limit, self.delta_time)
+        self.set_timesteps(self.ctrl_time, self.delta_time)
 
         self._task_observables = {}
         self._task_observables['target'] = observable.MJCFFeature('xpos', self.target)
@@ -203,7 +206,7 @@ class MultiStepTaskSimple(composer.Task):
         self._task_observables['target_vel'] = observable.MJCFFeature('sensordata', self.sensors[0])
         self._task_observables['whip_start_vel'] = observable.MJCFFeature('sensordata', self.sensors[1])
         self._task_observables['whip_end_vel'] = observable.MJCFFeature('sensordata', self.sensors[2])
-        self._task_observables['time'] = observable.Generic(lambda x: x.time())
+        # self._task_observables['time'] = observable.Generic(lambda x: x.time())
 
         for obs in self._task_observables.values():
             obs.enabled = True
@@ -226,15 +229,16 @@ class MultiStepTaskSimple(composer.Task):
         if hasattr(self, 'arm_qpos'):
             assert physics.model.nq == len(self.arm_qpos)
             physics.bind(self.joints).qpos = self.arm_qpos
-        # target_xpos = physics.bind(self.target).xpos
+
+        target_xpos = physics.bind(self.target).xpos
         # whip_start_xpos = physics.bind(self.whip_start).xpos
-        # whip_end_xpos = physics.bind(self.whip_end).xpos
+        whip_end_xpos = physics.bind(self.whip_end).xpos
         # speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
         #         @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
         # self.old_stats.old_a2t = np.linalg.norm(target_xpos - whip_start_xpos)
-        # self.old_stats.old_w2t = np.linalg.norm(target_xpos - whip_end_xpos)
+        self.old_stats.old_w2t = np.linalg.norm(target_xpos - whip_end_xpos)
         # self.old_stats.old_speed = speed
-        # self.old_stats.is_hitted = False
+        self.old_stats.is_hitted = False
 
     def before_step(self, physics, action, random_state):
         physics.set_control(action)
@@ -250,37 +254,36 @@ class MultiStepTaskSimple(composer.Task):
     def get_reward(self, physics):
         # 计算当下的奖励参数
         target_xpos = physics.bind(self.target).xpos
-        whip_start_xpos = physics.bind(self.whip_start).xpos
+        # whip_start_xpos = physics.bind(self.whip_start).xpos
         whip_end_xpos = physics.bind(self.whip_end).xpos
-        speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
-                @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
+        # speed = (physics.named.data.sensordata['target_vel'] - physics.named.data.sensordata['whip_end_vel'])\
+        #         @ (target_xpos - whip_end_xpos) / np.linalg.norm(target_xpos - whip_end_xpos)
         self.stats.w2t = np.linalg.norm(target_xpos - whip_end_xpos)
-        self.stats.a2t = np.linalg.norm(target_xpos - whip_start_xpos)
-        self.stats.speed = speed
+        # self.stats.a2t = np.linalg.norm(target_xpos - whip_start_xpos)
+        # self.stats.speed = speed
 
         # 计算奖励方法0
         if self.reward_type == 0:
             reward =  1 - self.stats.w2t
+            reward += 5.0 if self.stats.is_hitted else 0
 
         # 计算奖励方法1
-        # if self.stats.is_hitted:
-        #     hit_reward = 10.0
-        # elif physics.time() > self.time_limit:
-        #     hit_reward = -10.0
-        # else:
-        #     hit_reward = 0.0
-        # w2t_reward = 1.0 if self.stats.old_w2t > self.stats.w2t else -1.0
-        # a2t_reward = 1.0 if self.stats.old_a2t > self.stats.a2t else -1.0
-        # speed_reward = 1.0 if self.stats.speed > self.stats.old_speed else -1.0
-        # # w2t_reward = self.stats.old_w2t - self.stats.w2t
-        # # a2t_reward = self.stats.old_a2t - self.stats.a2t
-        # # speed_reward = self.stats.speed - self.stats.old_speed
+        if self.reward_type == 1:
+            reward = 1.0 if self.old_stats.w2t > self.stats.w2t else 0
+            reward += 10.0 if self.stats.is_hitted else 0
 
+        # 计算奖励方法2
+        if self.reward_type == 2:
+            reward = 5.0 * np.max([self.old_stats.w2t - self.stats.w2t, 0])
+            reward += 10.0 if self.stats.is_hitted else 0
 
-        # 更新奖励参数
+        # 计算奖励方法3 稀疏奖励
+        if self.reward_type == 3:
+            reward = 10.0 if self.stats.is_hitted else 0
+
         self.old_stats.w2t = self.stats.w2t
-        self.old_stats.a2t = self.stats.a2t
-        self.old_stats.speed = self.stats.speed
+        # self.old_stats.a2t = self.stats.a2t
+        # self.old_stats.speed = self.stats.speed
         return reward
     
     def show_observables(self):

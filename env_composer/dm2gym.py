@@ -4,15 +4,16 @@ import gymnasium as gym
 from gymnasium import spaces
 from gymnasium.envs.registration import register
 from dm_control import composer
-from .easy_task import SingleStepTaskSimple, MultiStepTaskSimple
+from .task import SingleStepTask, TwoStepTask, MultiStepTask
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=too-many-arguments
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
 
 task_list = {
-    "SingleStepTaskSimple": SingleStepTaskSimple,
-    "MultiStepTaskSimple": MultiStepTaskSimple,
+    "SingleStepTask": SingleStepTask,
+    "TwoStepTask": TwoStepTask,
+    "MultiStepTask": MultiStepTask,
     }
 
 def register2gym(env_id, img_size=84, camera_id=0):

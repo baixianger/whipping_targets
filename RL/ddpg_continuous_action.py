@@ -236,11 +236,11 @@ def trainer(config):
 
             # Checkpoints
             if update % save_freq == 0:
-                torch.save(actor, f"checkpoints/{run_name}-update{update}.pth")
+                torch.save(actor, f"checkpoints/{wandb_group}_{exp_name}_update{update}_{start_time}.pth")
                 for filename in os.listdir("checkpoints"):
-                    if filename == f"{run_name}-update{update-save_freq}.pth":
+                    if filename == f"{wandb_group}_{exp_name}_update{update-save_freq}_{start_time}.pth":
                         os.remove(f"checkpoints/{filename}")
     # Final save
-    torch.save(actor, f"checkpoints/{run_name}-update{update}.pth")
+    torch.save(actor, f"checkpoints/{wandb_group}_{exp_name}_update{update}_{start_time}.pth")
     envs.close()
     writer.close()

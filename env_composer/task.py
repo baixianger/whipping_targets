@@ -18,7 +18,7 @@ from dm_control.utils import rewards
 from .arm import Arm
 from .whip import Whip
 from .target import Target
-from. utils import FixedRandomPos, RandomPos, TaskRunningStats, _FIXED_ARM_QPOS
+from .utils import FixedRandomPos, RandomPos, TaskRunningStats, _FIXED_ARM_QPOS
 
 # pylint: disable=invalid-name
 # pylint: disable=unused-argument

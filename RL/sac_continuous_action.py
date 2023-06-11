@@ -43,14 +43,19 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, envs, hidden_dims=(256, 256)):
+    def __init__(self, envs, hidden_dims=(256, 128)):
         super().__init__()
         hidden_dims = (hidden_dims,) if isinstance(hidden_dims, int) else hidden_dims
         input_dim = np.array(envs.single_observation_space.shape).prod()
         output_dim = np.array(envs.single_action_space.shape).prod()
         self.head = head(input_dim, hidden_dims)
-        self.mean = nn.Linear(hidden_dims[-1], output_dim)
-        self.logstd = nn.Linear(hidden_dims[-1], output_dim)
+        self.mean = nn.Sequential(
+                                nn.Linear(hidden_dims[-1], output_dim),
+                                )
+        self.logstd = nn.Sequential(
+                                nn.Linear(hidden_dims[-1], output_dim),
+                                nn.Tanh(),
+                                )
         # action rescaling
         action_low = torch.tensor(envs.single_action_space.low).view(1, -1).float()
         action_high = torch.tensor(envs.single_action_space.high).view(1, -1).float()
@@ -63,7 +68,6 @@ class Actor(nn.Module):
         x = self.head(x)
         mean = self.mean(x)
         log_std = self.logstd(x)
-        log_std = torch.tanh(log_std)
         log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
         return mean, log_std
 
@@ -282,11 +286,11 @@ def trainer(config):
 
             # Checkpoints
             if update % save_freq == 0:
-                torch.save(actor, f"checkpoints/{run_name}-update{update}.pth")
+                torch.save(actor, f"checkpoints/{wandb_group}_{exp_name}_update{update}_{start_time}.pth")
                 for filename in os.listdir("checkpoints"):
-                    if filename == f"{run_name}-update{update-save_freq}.pth":
+                    if filename == f"{wandb_group}_{exp_name}_update{update-save_freq}_{start_time}.pth":
                         os.remove(f"checkpoints/{filename}")
     # Final save
-    torch.save(actor, f"checkpoints/{run_name}-update{update}.pth")
+    torch.save(actor, f"checkpoints/{wandb_group}_{exp_name}_update{update}_{start_time}.pth")
     envs.close()
     writer.close()
