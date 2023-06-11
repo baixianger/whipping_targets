@@ -244,7 +244,7 @@ class MultiStepTaskSimple(composer.Task):
         physics.set_control(action)
 
     def after_substep(self, physics, random_state):
-        if physics.named.data.sensordata['hit'] > 1 and not self.old_stats.is_hitted:
+        if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
             self.stats.is_hitted = True
             self.after_hit(physics)
 

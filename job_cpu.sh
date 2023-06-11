@@ -2,7 +2,7 @@
 #BSUB -J Whipping
 #BSUB -q hpc
 #BSUB -n 32
-#BSUB -W 10:00
+#BSUB -W 12:00
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=10GB]"
 #BSUB -u baixianger@gmail.com
@@ -31,7 +31,7 @@
 # python3 train.py wandb_group=ppo_multi task=MultiStepTaskSimple algo=ppo exp_name=reward_design_%J task.target=0 task.reward_type=0 algo.num_envs=64 algo.save_freq=500 algo.num_updates=3000
 # python3 train.py wandb_group=ppo_multi task=MultiStepTaskSimple algo=ppo exp_name=reward_design_%J task.target=0 task.reward_type=1 algo.num_envs=64 algo.save_freq=500 algo.num_updates=3000
 # python3 train.py wandb_group=ppo_multi task=MultiStepTaskSimple algo=ppo exp_name=reward_design_%J task.target=0 task.reward_type=2 algo.num_envs=64 algo.save_freq=500 algo.num_updates=3000
-# python3 train.py wandb_group=ppo_multi task=MultiStepTaskSimple algo=ppo exp_name=reward_design_%J task.target=0 task.reward_type=3 algo.num_envs=64 algo.save_freq=500 algo.num_updates=3000
+python3 train.py wandb_group=ppo_multi task=MultiStepTaskSimple algo=ppo exp_name=reward_design_%J task.target=0 task.reward_type=3 algo.num_envs=64 algo.save_freq=500 algo.num_updates=3000
 
 ############# 各种算法在多步任务模式下采用reward0规则的表现实验
 # python3 train.py wandb_group=multi_diff_algo task=MultiStepTaskSimple algo=ppo  exp_name=diff_ppo  task.target=0 task.reward_type=1 algo.num_envs=64 algo.save_freq=500  algo.num_updates=2000
