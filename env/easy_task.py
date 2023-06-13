@@ -4,12 +4,27 @@ import numpy as np
 # Composer high level imports
 from dm_control import mjcf
 from dm_control import composer
+from dm_control.utils import containers
 from dm_control.composer.observation import observable
 from. utils import FixedRandomPos, RandomPos, TaskRunningStats, _RESET_QPOS
 
-
 # pylint: disable=invalid-name
 # pylint: disable=unused-argument
+
+# 将自定义的suite domain注册到dm_control中
+# 将本module(easy_task.py)导入到dm_control/suite/__init__.py的前面几行。
+SUITE = containers.TaggedTasks()
+
+@SUITE.add('whipping')
+def single_step(random=None, environment_kwargs=None):
+    task = SingleStepTaskSimple(**environment_kwargs)
+    return composer.Environment(task=task)
+
+@SUITE.add('whipping')
+def multi_step(random=None, environment_kwargs=None):
+    task = SingleStepTaskSimple(**environment_kwargs)
+    return composer.Environment(task=task)
+
 
 @dataclasses.dataclass
 class TaskRunningStats: # pylint: disable=too-many-instance-attributes
@@ -306,3 +321,4 @@ class MultiStepTaskSimple(composer.Task):
         """Calculate the distance between whip end and target."""
         return np.linalg.norm(
             physics.bind(self.target).xpos - physics.bind(self.whip_end).xpos)
+
