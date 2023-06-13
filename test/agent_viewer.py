@@ -5,15 +5,24 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import torch
 from dm_control import composer, viewer
-from env.easy_task import SingleStepTaskSimple
+from env.easy_task import SingleStepTaskSimple, MultiStepTaskSimple
+
+# 配置
+task_type = "multi"
+target = 0
+arm_qpos = 1
+path = f"checkpoints/多步环境(力矩控制和正态分布)+PPO+奖励研究/ppo_multi_reward0_update1500.pth"
+
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
-agent = torch.load("checkpoints/单步环境+PPO+奖励研究/ppo_single_reward0_update100.pth", map_location=device)
+agent = torch.load(path, map_location=device)
+print(agent)
 
-task = SingleStepTaskSimple(arm_qpos=1, target=False)
-task.time_limit = 0.7
+task_fn = SingleStepTaskSimple if task_type == "single" else MultiStepTaskSimple
+task = task_fn(arm_qpos=arm_qpos, target=target)
+task.time_limit = 1
 task.set_timesteps(0.02, 0.002)
 env = composer.Environment(task)
 # The operator 'aten::_sample_dirichlet' is not currently implemented for the MPS device. 
@@ -31,7 +40,10 @@ def get_action(time_step):
         action = action[0].cpu().numpy()
     return action
 
-time_step = env.reset()
-action = get_action(time_step)
+if task_type == "single":
+    time_step = env.reset()
+    action = get_action(time_step)
+    viewer.launch(env, policy=lambda time_step: action)
 
-viewer.launch(env, policy=lambda time_step: action)
+elif task_type == "multi":
+    viewer.launch(env, policy=get_action)
