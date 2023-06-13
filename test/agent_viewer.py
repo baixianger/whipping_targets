@@ -1,17 +1,20 @@
 """Test the trained agent in dm_control environment"""
-from dm_control import composer, viewer
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import torch
+from dm_control import composer, viewer
 from env.easy_task import SingleStepTaskSimple
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
-agent = torch.load("checkpoints/SingleStepTaskSimple__HPCtest__42__1685454905-update30.pth", map_location=device)
+agent = torch.load("checkpoints/单步环境+PPO+奖励研究/ppo_single_reward0_update100.pth", map_location=device)
 
-task = SingleStepTaskSimple(target=True)
-task.time_limit = 1
-task.set_timesteps(0.01, 0.01)
+task = SingleStepTaskSimple(arm_qpos=1, target=False)
+task.time_limit = 0.7
+task.set_timesteps(0.02, 0.002)
 env = composer.Environment(task)
 # The operator 'aten::_sample_dirichlet' is not currently implemented for the MPS device. 
 # If you want this op to be added in priority during the prototype phase of this feature, 

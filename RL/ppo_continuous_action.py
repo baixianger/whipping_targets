@@ -455,11 +455,11 @@ def trainer(config):
 
         # Checkpoints
         if update % save_freq == 0:
-            torch.save(agent, f"checkpoints/{wandb_group}_{exp_name}_update{update}_{start_time}.pth")
+            torch.save(agent, f"checkpoints/{wandb_group}_{exp_name}_update{update}.pth")
             for filename in os.listdir("checkpoints"):
-                if filename == f"{wandb_group}_{exp_name}_update{update-save_freq}_{start_time}.pth":
+                if filename == f"{wandb_group}_{exp_name}_update{update-save_freq}.pth":
                     os.remove(f"checkpoints/{filename}")
     # Final save
-    torch.save(agent, f"checkpoints/{wandb_group}_{exp_name}_update{update}_{start_time}.pth")
+    torch.save(agent, f"checkpoints/{wandb_group}_{exp_name}_update{update}.pth")
     envs.close()
     writer.close()

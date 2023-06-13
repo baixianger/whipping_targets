@@ -9,6 +9,7 @@ checkpoints/
 *.err
 *.out
 *.sh
+*.log
 
 
 # Byte-compiled / optimized / DLL files

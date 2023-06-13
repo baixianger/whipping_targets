@@ -127,7 +127,7 @@ class SingleStepTaskSimple(composer.Task):
         self.whip_vel_buffer.append(physics.named.data.sensordata['whip_end_vel'])
         if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
             self.stats.is_hitted = True
-            self.after_hit(physics)
+        self.after_hit(physics)
 
     def should_terminate_episode(self, physics):
         return physics.time() > self.time_limit
@@ -163,7 +163,8 @@ class SingleStepTaskSimple(composer.Task):
 
     def after_hit(self, physics):
         """Change the color and size of the target."""
-        self.target.geom[0].rgba = (0.96, 0.38, 0.08, 0.9)
+        physics.bind(self.target.geom[0]).rgba = (
+        [.5, .5, .5, .4] if not self.stats.is_hitted else [0.96, 0.38, 0.08, 0.9])
 
 
 class MultiStepTaskSimple(composer.Task):
@@ -189,8 +190,8 @@ class MultiStepTaskSimple(composer.Task):
         self.stats = TaskRunningStats()
         self.old_stats = TaskRunningStats()
 
-        self.max_steps = 50
-        self.time_limit = 1
+        self.max_steps = 25
+        self.time_limit = 0.5
         self.ctrl_time = 0.02
         self.delta_time = 0.002
         self.num_substeps = int(self.time_limit / self.delta_time)
@@ -246,7 +247,7 @@ class MultiStepTaskSimple(composer.Task):
     def after_substep(self, physics, random_state):
         if physics.named.data.sensordata['hit'] > 1 and not self.stats.is_hitted:
             self.stats.is_hitted = True
-            self.after_hit(physics)
+        self.after_hit(physics)
 
     def should_terminate_episode(self, physics):
         return physics.time() > self.time_limit or self.stats.is_hitted
@@ -261,6 +262,10 @@ class MultiStepTaskSimple(composer.Task):
         self.stats.w2t = np.linalg.norm(target_xpos - whip_end_xpos)
         # self.stats.a2t = np.linalg.norm(target_xpos - whip_start_xpos)
         # self.stats.speed = speed
+        
+        # 计算奖励方法1 稀疏奖励
+        if self.reward_type == 3:
+            reward = 10.0 if self.stats.is_hitted else 0
 
         # 计算奖励方法0
         if self.reward_type == 0:
@@ -277,10 +282,6 @@ class MultiStepTaskSimple(composer.Task):
             reward = 5.0 * np.max([self.old_stats.w2t - self.stats.w2t, 0])
             reward += 10.0 if self.stats.is_hitted else 0
 
-        # 计算奖励方法3 稀疏奖励
-        if self.reward_type == 3:
-            reward = 10.0 if self.stats.is_hitted else 0
-
         self.old_stats.w2t = self.stats.w2t
         # self.old_stats.a2t = self.stats.a2t
         # self.old_stats.speed = self.stats.speed
@@ -293,7 +294,8 @@ class MultiStepTaskSimple(composer.Task):
 
     def after_hit(self, physics):
         """Change the color and size of the target."""
-        self.target.geom[0].rgba = (0.96, 0.38, 0.08, 0.9)
+        physics.bind(self.target.geom[0]).rgba = (
+        [.5, .5, .5, .4] if not self.stats.is_hitted else [0.96, 0.38, 0.08, 0.9])
 
     def _whip_start_to_target(self, physics):
         """Calculate the distance between arm and target."""
