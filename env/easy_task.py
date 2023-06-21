@@ -321,4 +321,3 @@ class MultiStepTaskSimple(composer.Task):
         """Calculate the distance between whip end and target."""
         return np.linalg.norm(
             physics.bind(self.target).xpos - physics.bind(self.whip_end).xpos)
-
