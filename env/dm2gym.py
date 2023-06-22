@@ -5,6 +5,7 @@ from gymnasium import spaces
 from gymnasium.envs.registration import register
 from dm_control import composer
 from .easy_task import SingleStepTaskSimple, MultiStepTaskSimple
+from .parabolic import ParabolicCascadeEnv, Viewer
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=too-many-arguments
 # pylint: disable=missing-class-docstring
@@ -13,6 +14,7 @@ from .easy_task import SingleStepTaskSimple, MultiStepTaskSimple
 task_list = {
     "SingleStepTaskSimple": SingleStepTaskSimple,
     "MultiStepTaskSimple": MultiStepTaskSimple,
+    "ParabolicCascadeTask": ParabolicCascadeEnv,
     }
 
 def register2gym(env_id, img_size=84, camera_id=0):
@@ -37,7 +39,11 @@ def make_vectorized_envs(num_envs, asynchronous, **kwargs):
     return gym.vector.SyncVectorEnv(gym_env_fns)
 
 def make_gym_env(**kwargs):
-    env = WhippingGym(**kwargs)
+    if kwargs.get("env_id") is "ParabolicCascadeTask":
+        GymEnv = ParabolicCascadeEnv
+    else:
+        GymEnv = WhippingGym
+    env = GymEnv(**kwargs)
     # env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
     env = gym.wrappers.RecordEpisodeStatistics(env)
     # env = gym.wrappers.ClipAction(env)
