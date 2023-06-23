@@ -24,6 +24,14 @@ class ParabolicCascadeEnv(gym.Env):
                                 map_location=torch.device("cpu")) # 在 cpu 上进行推理，避免拷贝数据到 gpu
         self.trajecotry_model = None
         self.hit_pos = None
+
+        # Render settings if save_video is True
+        self.save_video = getattr(kwargs, 'save_video', False)
+        self.height = getattr(kwargs, 'height', 600)
+        self.width = getattr(kwargs, 'width', 800)
+        self.frames = []
+        if self.save_video: 
+            self.initialize_render() 
         
         # 继承自 gym.Env 的属性
         self.metadata = {'render.modes': ['human', 'rgb_array'], 'video.frames_per_second': 30}
@@ -35,22 +43,20 @@ class ParabolicCascadeEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         """重置环境，返回初始状态。返回的状态为到达预测击中点的时间和位置
         !!! 时间为模拟器运行的绝对时间，即估计的是在何时到达预测点而不是剩余多少时间到达预测点"""
-        mujoco.mj_resetData(self.model, self.data)
-        mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
-        random_idx = np.random.randint(0, len(self.mocap)-250)
-        qpos = np.array([*self.mocap[random_idx][1:4], 1, 0, 0, 0])
-        qvel = np.array([*self.mocap[random_idx][4:], 0, 0, 0])
-        self.data.joint('target').qpos = qpos
-        self.data.joint('target').qvel = qvel
+        self.initialize_target(seed)
         target_pos_seq = []
-
-        while qpos[1] <= -6: # 保证目标点在摄像机视野内, 6米外空转等待
+        while self.data.joint('target').qpos[1] <= -6:
+            # 保证目标点在摄像机视野内, 6米外空转等待
             mujoco.mj_step(self.model, self.data)
-
+            if self.save_video: 
+                self.update_frame()
         for _ in range(10): # 收集足够的序列进行轨迹预测
             mujoco.mj_step(self.model, self.data)
+            if self.save_video: 
+                self.update_frame()
             target_pos_seq.append(self.data.joint('target').qpos)
-        # 因为如果进行实时轨迹预测，会导致模型的推理时间过长，同时也设计异步操作，
+
+        # 因为如果进行实时轨迹预测，会导致模型的推理时间过长，同时也需要设计异步操作，
         # 所以这里采用一次性预测的方式，预测完后不进行修正
         target_pos_seq = torch.Tensor(target_pos_seq).view(1, -1, 7)
         obs = self.hit_pred(target_pos_seq) # hit_time and hit_pos
@@ -62,14 +68,33 @@ class ParabolicCascadeEnv(gym.Env):
         whip_time = action if action > 0 else 0
         while whip_time > self.data.time:
             mujoco.mj_step(self.model, self.data)
+            if self.save_video: 
+                self.update_frame()
         reward = self.start_whippinig()
-        return [0, 0, 0, 0] , reward, True, False, {}
+        return [.0, .0, .0, .0] , reward, True, False, {}
+
+    def seed(self, seed):
+        # pylint: disable=protected-access
+        self.random_state = np.random.RandomState(seed)
+
+    def initialize_target(self, seed):
+        mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
+        # print("重置后的时间", self.data.time)
+        np.random.seed(seed)
+        random_idx = np.random.randint(0, len(self.mocap)-250)
+        qpos = np.array([*self.mocap[random_idx][1:4], 1, 0, 0, 0])
+        qvel = np.array([*self.mocap[random_idx][4:], 0, 0, 0])
+        self.data.joint('target').qpos = qpos
+        self.data.joint('target').qvel = qvel       
 
     def hit_pred(self, target_pos_seq):
         """dummy trajectory prediction"""
         idx = np.searchsorted(self.mocap[:, 2], target_pos_seq[0][-1][1])
         time_pred = self.mocap[idx][0] # 从当下帧开始多久后到达预定目标位，相对时间
         self.hit_pos = np.array([[-0.9, 0, 1]])[0] # batch * 3
+        # print("预测的时间", time_pred+self.data.time)
+        # print("当前时间", self.data.time)
+        # print("倒计时: ", time_pred)
         return (time_pred + self.data.time, *self.hit_pos)
                 
     def start_whippinig(self):
@@ -91,21 +116,59 @@ class ParabolicCascadeEnv(gym.Env):
         w2t_distance = np.linalg.norm(np.array(target_buffer) - np.array(whip_buffer), axis=-1, keepdims=True).min()
         reward = 1 - w2t_distance
         return reward
-    
-    def viewer(self):
-        pass
+
+    def initialize_render(self, cam_names=["close", "far"]):
+        self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
+        self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150.value)
+        self.opt = mujoco.MjvOption()
+        self.rect = mujoco.MjrRect(0, 0, self.width, self.height)
+        self.cam_dict = {}
+        for i in range(self.model.ncam):
+            cam = mujoco.MjvCamera()
+            cam.fixedcamid = i
+            cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+            cam_name = self.model.camera(i).name
+            if cam_name in cam_names:
+                self.cam_dict[self.model.camera(i).name] = cam
+
+ 
+    def update_frame(self):
+        """Render the environment."""
+        time = self.data.time
+        height = self.data.joint("target").qpos[2]
+        speed = self.data.joint("target").qvel[2]
+        force = self.data.sensordata[0]
+        views = []
+        for cam_name, cam in self.cam_dict.items():
+            self.cam_id = cam_name
+            mujoco.mjv_updateCameraPose(self.model, self.data, cam)
+            mujoco.mjv_updateScene(self.model, self.data, self.opt, None, cam,
+                            mujoco.mjtCatBit.mjCAT_ALL.value, self.scene)
+            mujoco.mjr_render(self.rect, self.scene, self.context)
+            if cam_name == "far":
+                mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL,
+                                mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT.value,
+                                self.rect, 
+                                "Time\nHeight\nSpeed\nForce\nCamera", 
+                                f"{time}\n{height}\n{speed}\n{force}\n{self.cam_id}",
+                                self.context)
+            image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            mujoco.mjr_readPixels(image, None, self.rect, self.context)
+            views.append(np.flipud(image))
+        self.frames(np.hstack(views))
 
     def close(self):
         pass
 
 
 class Viewer:
-    def __init__(self, env, agent):
+    def __init__(self, env, agent=lambda x: 0.38):
         self.button_left = False
         self.button_middle = False
         self.button_right = False
         self.lastx = 0
         self.lasty = 0
+        self.env = env
         self.model = env.model
         self.data = env.data
         self.cam = mujoco.MjvCamera()                        # Abstract camera
@@ -129,8 +192,6 @@ class Viewer:
         glfw.set_mouse_button_callback(self.window, self.mouse_button)
         glfw.set_scroll_callback(self.window, self.scroll)
 
-        # self.cam.azimuth = 90 ; self.cam.elevation = -89 ; self.cam.distance = 11
-        # self.cam.lookat =np.array([ 0.0 , 0.0 , 0.0 ])
 
     def keyboard(self, window, key, scancode, act, mods):
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
@@ -184,7 +245,7 @@ class Viewer:
         action = mujoco.mjtMouse.mjMOUSE_ZOOM
         mujoco.mjv_moveCamera(self.model, action, 0.0, -0.05 * yoffset, self.scene, self.cam)
 
-    def viewer(self, show="notebook"):
+    def viewer(self):
         while not glfw.window_should_close(self.window):
             time_prev = self.data.time
 
@@ -197,10 +258,6 @@ class Viewer:
             # get framebuffer viewport
             viewport_width, viewport_height = glfw.get_framebuffer_size(self.window)
             viewport = mujoco.MjrRect(0, 0, viewport_width, viewport_height)
-
-            #print camera configuration (help to initialize the view)
-            # print('cam.azimuth =',self.cam.azimuth,';','cam.elevation =',self.cam.elevation,';','cam.distance = ',self.cam.distance)
-            # print('cam.lookat =np.array([',self.cam.lookat[0],',',self.cam.lookat[1],',',self.cam.lookat[2],'])')
 
             # Update scene and render
             mujoco.mjv_updateScene(self.model, self.data, self.opt, None, self.cam,

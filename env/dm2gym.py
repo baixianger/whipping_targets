@@ -36,10 +36,10 @@ def make_vectorized_envs(num_envs, asynchronous, **kwargs):
     gym_env_fns = [lambda : make_gym_env(**kwargs) for _ in range(num_envs)]
     if asynchronous:
         return gym.vector.AsyncVectorEnv(gym_env_fns)
-    return gym.vector.SyncVectorEnv(gym_env_fns)
+    return gym.vector.SyncVectorEnv(gym_env_fns, copy=False)
 
 def make_gym_env(**kwargs):
-    if kwargs.get("env_id") is "ParabolicCascadeTask":
+    if kwargs.get("env_id") == "ParabolicCascadeTask":
         GymEnv = ParabolicCascadeEnv
     else:
         GymEnv = WhippingGym
